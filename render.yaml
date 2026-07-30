@@ -1,0 +1,47 @@
+# Render Blueprint — doto-backend (API DOTO+)
+# Docs: https://render.com/docs/blueprint-spec
+# SSE in-memory → webService avec un seul worker gunicorn.
+
+databases:
+  - name: doto-db
+    plan: free
+    databaseName: doto
+    user: doto
+
+services:
+  - type: web
+    name: doto-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate --noinput
+    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --keep-alive 65
+    healthCheckPath: /api/health/
+    envVars:
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_BEHIND_PROXY
+        value: "True"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: doto-db
+          property: connectionString
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: CARD_TOKEN_KEY
+        sync: false
+      - key: CORS_ALLOW_ALL_ORIGINS
+        value: "False"
+      - key: SMS_PROVIDER
+        value: mock
+      - key: DEMO_OTP_CODE
+        value: "000000"
+      - key: ACCESS_TOKEN_MINUTES
+        value: "60"
+      - key: REFRESH_TOKEN_DAYS
+        value: "7"
+      - key: PUBLIC_API_BASE
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false

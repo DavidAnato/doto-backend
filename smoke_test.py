@@ -1,4 +1,4 @@
-"""Test de fumée étendu — auth sans OTP pro, OTP inscription/reset, PIN, DodoCard, RBAC."""
+"""Test de fumée étendu — auth sans OTP pro, OTP inscription/reset, PIN, DotoCard, RBAC."""
 import io
 import json
 import os
@@ -130,7 +130,7 @@ if not services.is_valid_token(token):
     )
     token = DodoCard.issue(patient).token_chiffre
 
-# DodoCard scan (pro) → consentement pending (hub_notified seulement après approve / urgence)
+# DotoCard scan (pro) -> consentement pending + SSE dodocard_scan cible user_id
 scan = show(
     "scan",
     c.post("/api/dodocards/scan/", data=json.dumps({"token": token}), content_type="application/json", **H),
@@ -321,7 +321,7 @@ print("notifications + patient SSE gate: OK")
 ra = login_pro("admin", "AdminDoto2026!")
 show("dashboard", c.get("/api/admin/dashboard/", **ra))
 
-# --- DodoCard PDF + perte + réémission ---
+# --- DotoCard PDF + perte + réémission ---
 pdf_r = c.get("/api/dodocards/mine/pdf/", **pH)
 assert pdf_r.status_code == 200, pdf_r.content[:200]
 assert pdf_r["Content-Type"] == "application/pdf"

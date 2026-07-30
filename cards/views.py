@@ -60,7 +60,7 @@ def _ensure_ready_for_issue(patient):
     return Response(
         {
             "detail": (
-                "Pour générer votre première DodoCard, complétez : "
+                "Pour générer votre première DotoCard, complétez : "
                 + ", ".join(missing)
                 + ". Les autres champs (groupe sanguin, etc.) sont optionnels."
             ),
@@ -130,24 +130,24 @@ class DodoCardViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="mine")
     def mine(self, request):
-        """DodoCard active du patient connecté (app DotoPlus)."""
+        """DotoCard active du patient connecté (app DotoPlus)."""
         patient = _patient_for(request.user)
         if patient is None:
             return Response({"detail": "Aucun dossier patient."}, status=status.HTTP_404_NOT_FOUND)
         card = _active_card(patient)
         if card is None:
-            return Response({"detail": "Aucune DodoCard active."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Aucune DotoCard active."}, status=status.HTTP_404_NOT_FOUND)
         return Response(DodoCardSerializer(card).data)
 
     @action(detail=False, methods=["get"], url_path="mine/pdf")
     def mine_pdf(self, request):
-        """PDF imprimable de la DodoCard active."""
+        """PDF imprimable de la DotoCard active."""
         patient = _patient_for(request.user)
         if patient is None:
             return Response({"detail": "Aucun dossier patient."}, status=status.HTTP_404_NOT_FOUND)
         card = _active_card(patient)
         if card is None:
-            return Response({"detail": "Aucune DodoCard active."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Aucune DotoCard active."}, status=status.HTTP_404_NOT_FOUND)
         pdf_bytes = build_dodocard_pdf(card)
         log_action(
             request,
@@ -155,7 +155,7 @@ class DodoCardViewSet(viewsets.ModelViewSet):
             target=f"card:{card.id}",
             patient_npi=patient.npi,
         )
-        filename = f"DodoCard_{patient.npi}_{card.id}.pdf"
+        filename = f"DotoCard_{patient.npi}_{card.id}.pdf"
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
@@ -206,8 +206,8 @@ class DodoCardViewSet(viewsets.ModelViewSet):
         )
         _notify_card_event(
             patient,
-            title="DodoCard — perte signalée",
-            body="Votre ancienne carte est invalidée. Une nouvelle DodoCard a été émise.",
+            title="DotoCard — perte signalée",
+            body="Votre ancienne carte est invalidée. Une nouvelle DotoCard a été émise.",
             card_id=card.id,
             event="report_loss",
         )
@@ -242,8 +242,8 @@ class DodoCardViewSet(viewsets.ModelViewSet):
             )
             _notify_card_event(
                 patient,
-                title="DodoCard émise",
-                body="Votre nouvelle DodoCard est disponible.",
+                title="DotoCard émise",
+                body="Votre nouvelle DotoCard est disponible.",
                 card_id=card.id,
                 event="issue",
             )
@@ -260,7 +260,7 @@ class DodoCardViewSet(viewsets.ModelViewSet):
         )
         _notify_card_event(
             patient,
-            title="DodoCard renouvelée",
+            title="DotoCard renouvelée",
             body="Votre ancienne carte est invalidée. Présentez le nouveau QR.",
             card_id=card.id,
             event="reissue",
@@ -276,7 +276,7 @@ class DodoCardViewSet(viewsets.ModelViewSet):
         )
 
     def create(self, request, *args, **kwargs):
-        """Émission d'une DodoCard pour un patient (CDC §2.4)."""
+        """Émission d'une DotoCard pour un patient (CDC §2.4)."""
         patient = Patient.objects.filter(pk=request.data.get("patient")).first()
         if patient is None:
             return Response({"detail": "Patient introuvable."}, status=status.HTTP_400_BAD_REQUEST)
@@ -288,8 +288,8 @@ class DodoCardViewSet(viewsets.ModelViewSet):
         log_action(request, "emettre_dodocard", target=f"card:{card.id}", patient_npi=patient.npi)
         _notify_card_event(
             patient,
-            title="DodoCard émise",
-            body="Une DodoCard a été émise pour votre dossier.",
+            title="DotoCard émise",
+            body="Une DotoCard a été émise pour votre dossier.",
             card_id=card.id,
             event="issue",
         )
@@ -309,8 +309,8 @@ class DodoCardViewSet(viewsets.ModelViewSet):
         )
         _notify_card_event(
             card.patient,
-            title="DodoCard révoquée",
-            body="Votre DodoCard a été invalidée. Demandez une nouvelle carte si besoin.",
+            title="DotoCard révoquée",
+            body="Votre DotoCard a été invalidée. Demandez une nouvelle carte si besoin.",
             card_id=card.id,
             event="revoke",
         )
@@ -330,8 +330,8 @@ class DodoCardViewSet(viewsets.ModelViewSet):
         )
         _notify_card_event(
             card.patient,
-            title="DodoCard réémise",
-            body="Une nouvelle DodoCard remplace votre ancienne carte.",
+            title="DotoCard réémise",
+            body="Une nouvelle DotoCard remplace votre ancienne carte.",
             card_id=card.id,
             event="reissue",
         )
@@ -351,7 +351,7 @@ class DodoCardViewSet(viewsets.ModelViewSet):
         """PDF d'une carte (admin / patient propriétaire)."""
         card = self.get_object()
         pdf_bytes = build_dodocard_pdf(card)
-        filename = f"DodoCard_{card.patient.npi}_{card.id}.pdf"
+        filename = f"DotoCard_{card.patient.npi}_{card.id}.pdf"
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
@@ -396,7 +396,7 @@ class ScanView(APIView):
             requester=request.user,
             patient=card.patient,
             mode=AccessRequest.Mode.SCAN,
-            reason="Scan DodoCard",
+            reason="Scan DotoCard",
             dodocard=card,
             emergency=emergency,
             request=request,
@@ -405,21 +405,22 @@ class ScanView(APIView):
         consent_required = req.status == AccessRequest.Status.PENDING
         is_emergency = req.status == AccessRequest.Status.EMERGENCY_BYPASS
 
-        # En urgence / grant actif : publier aussi dodocard_scan pour compat Hub
-        hub_notified = False
-        if not consent_required:
-            event = {
-                "type": "dodocard_scan",
-                "patient_id": card.patient.id,
-                "npi": card.patient.npi,
-                "full_name": card.patient.full_name,
-                "token": token[:12] + "…",
-                "scanned_by": request.user.id,
-                "access_request_id": req.id,
-                "emergency": is_emergency,
-                "ts": timezone.now().isoformat(),
-            }
-            hub_notified = hub_bus.publish(request.user.id, event) > 0
+        # Toujours notifier le Hub du MÊME pro (user_id) — y compris consent pending
+        # et réutilisation grant/pending (create_access_request ne republie pas alors).
+        # Canal ciblé : pas de broadcast global.
+        event = {
+            "type": "dodocard_scan",
+            "patient_id": card.patient.id,
+            "npi": card.patient.npi,
+            "full_name": card.patient.full_name,
+            "token": token[:12] + "…",
+            "scanned_by": request.user.id,
+            "access_request_id": req.id,
+            "emergency": is_emergency,
+            "consent_required": consent_required,
+            "ts": timezone.now().isoformat(),
+        }
+        hub_notified = hub_bus.publish(request.user.id, event) > 0
 
         return Response(
             {
@@ -458,7 +459,8 @@ class HubEventsView(APIView):
     """Flux SSE authentifié pour DotoHub.
 
     EventSource ne peut pas envoyer Authorization → passer `?access=<jwt>`.
-    Événements : `connected`, `dodocard_scan`, keepalive commentaires.
+    Événements : `connected`, `dodocard_scan`, `access_*`, keepalive commentaires.
+    Canal = user_id du JWT (pas de broadcast inter-pros).
     """
 
     authentication_classes = []
@@ -489,10 +491,21 @@ class HubEventsView(APIView):
                 yield f"data: {json.dumps(hello)}\n\n"
                 while True:
                     try:
-                        event = q.get(timeout=20)
-                        yield f"data: {json.dumps(event)}\n\n"
+                        event = q.get(timeout=15)
+                        yield f"data: {json.dumps(event, default=str)}\n\n"
                     except queue.Empty:
+                        # Commentaire + event ping (certains proxies coupent les seuls commentaires)
                         yield f": keepalive {int(time.time())}\n\n"
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "type": "ping",
+                                    "ts": timezone.now().isoformat(),
+                                }
+                            )
+                            + "\n\n"
+                        )
             finally:
                 hub_bus.unsubscribe(user_id, q)
 

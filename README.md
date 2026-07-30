@@ -1,13 +1,13 @@
 # doto-backend — API DOTO+
 
 API Django + Django REST Framework de l'écosystème santé **DOTO+** :
-carte d'accès QR **DodoCard**, plateforme web pro, apps mobiles patient & pro,
+carte d'accès QR **DotoCard**, plateforme web pro, apps mobiles patient & pro,
 back-office. Conçue d'après le cahier des charges v2.
 
 ## Stack
 - Django 5 · Django REST Framework · SimpleJWT (auth)
 - django-cors-headers · django-filter
-- cryptography (tokens DodoCard AES/Fernet) · qrcode + Pillow (QR)
+- cryptography (tokens DotoCard AES/Fernet) · qrcode + Pillow (QR)
 - SQLite en dev, PostgreSQL en prod (variables `POSTGRES_*`)
 
 ## Applications
@@ -16,7 +16,7 @@ back-office. Conçue d'après le cahier des charges v2.
 | `accounts` | Utilisateurs (RBAC multi-rôles + admin), structures, auth JWT |
 | `patients` | Patients, dossiers médicaux, assurance, en-tête d'urgence |
 | `medical` | Consultations, ordonnances (+interactions), examens, constantes |
-| `cards` | **DodoCard** : émission/révocation/réémission token QR, scan, dashboard |
+| `cards` | **DotoCard** : émission/révocation/réémission token QR, scan, dashboard |
 | `audit` | Journal d'audit (loi 2017-20) + export CSV |
 
 ## Installation (venv local à ce dossier)
@@ -32,17 +32,19 @@ source .venv/bin/activate
 pip install -r requirements.txt
 copy .env.example .env        # cp sous macOS/Linux
 python manage.py migrate
-python manage.py seed_demo
+python manage.py seeddata
+# (alias) python manage.py seed_demo
 python manage.py runserver 8000
 ```
 
 - API : http://127.0.0.1:8000/api/health/
-- Admin Django : http://127.0.0.1:8000/admin/ (`admin` / `AdminDoto2026!`)
+- Admin Django : http://127.0.0.1:8000/admin/
+- **Déploiement Render** : voir [`DEPLOY_RENDER.md`](DEPLOY_RENDER.md) (build, migrate, gunicorn, `seeddata`)
 
 ## Comptes de démonstration
 Login pro / admin : **identifiant + mot de passe** (pas d'OTP).
 OTP mock `000000` : inscription patient ou changement de mot de passe uniquement.
-Liste complète affichée par `seed_demo`.
+Liste complète affichée par `seeddata` / `seed_demo`.
 
 | Rôle | Identifiants |
 |------|--------------|

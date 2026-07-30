@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from audit.utils import log_action
 from core.permissions import Roles, role_can, role_can_write
 from notifications.models import Notification
-from notifications.services import notify_user
+from notifications.services import notify_patient_dossier_change, notify_user
 
 from .models import Appointment
 from .serializers import AppointmentSerializer
@@ -188,8 +188,24 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                     "kind": "rdv_pending",
                     "appointment_id": appt.id,
                     "patient_id": appt.patient_id,
+                    "section": "rdv",
                 },
             )
+
+        when = appt.debut.strftime("%d/%m/%Y %H:%M")
+        struct = getattr(appt.structure, "nom", None) or "votre structure"
+        notify_patient_dossier_change(
+            appt.patient,
+            title="Nouveau rendez-vous",
+            body=f"RDV prévu le {when} — {struct}"
+            + (f" ({appt.motif})" if appt.motif else "")
+            + ".",
+            notif_type=Notification.Type.SYSTEM,
+            event_type="appointment",
+            section="rdv",
+            payload={"kind": "rdv_created", "appointment_id": appt.id},
+            actor=user,
+        )
 
         return Response(self.get_serializer(appt).data, status=status.HTTP_201_CREATED)
 
@@ -225,8 +241,24 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                     f"de {appt.patient.full_name}."
                 ),
                 type=Notification.Type.SYSTEM,
-                payload={"kind": "rdv_confirmed", "appointment_id": appt.id},
+                payload={
+                    "kind": "rdv_confirmed",
+                    "appointment_id": appt.id,
+                    "patient_id": appt.patient_id,
+                    "section": "rdv",
+                },
             )
+        when = appt.debut.strftime("%d/%m/%Y %H:%M")
+        notify_patient_dossier_change(
+            appt.patient,
+            title="Rendez-vous confirmé",
+            body=f"Votre RDV du {when} a été confirmé.",
+            notif_type=Notification.Type.SYSTEM,
+            event_type="appointment",
+            section="rdv",
+            payload={"kind": "rdv_confirmed", "appointment_id": appt.id},
+            actor=user,
+        )
         return Response(self.get_serializer(appt).data)
 
     def partial_update(self, request, *args, **kwargs):

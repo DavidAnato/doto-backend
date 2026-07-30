@@ -104,10 +104,15 @@ class UserEventsView(APIView):
                 yield f"data: {json.dumps(hello)}\n\n"
                 while True:
                     try:
-                        event = q.get(timeout=20)
-                        yield f"data: {json.dumps(event)}\n\n"
+                        event = q.get(timeout=15)
+                        yield f"data: {json.dumps(event, default=str)}\n\n"
                     except queue.Empty:
                         yield f": keepalive {int(time.time())}\n\n"
+                        yield (
+                            "data: "
+                            + json.dumps({"type": "ping", "ts": timezone.now().isoformat()})
+                            + "\n\n"
+                        )
             finally:
                 hub_bus.unsubscribe(user_id, q)
 

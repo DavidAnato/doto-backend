@@ -13,3 +13,8 @@ numpy>=1.26
 opencv-python-headless>=4.8
 paddlepaddle>=2.6.0
 paddleocr>=2.7.0
+# Production / Render
+gunicorn>=22.0
+whitenoise>=6.6
+psycopg2-binary>=2.9
+dj-database-url>=2.2

@@ -1,7 +1,7 @@
 """
 Configuration Django — API DOTO+.
 
-Écosystème santé numérique béninois : carte d'accès QR (DodoCard),
+Écosystème santé numérique béninois : carte d'accès QR (DotoCard),
 plateforme web pro (DotoHub), app patient (DotoPlus) et back-office (DotoPlus Admin).
 """
 from datetime import timedelta
@@ -64,6 +64,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -94,8 +95,32 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
-# Base de données : SQLite par défaut (dev), PostgreSQL recommandé en prod (CDC §6.1).
-if env("POSTGRES_DB"):
+# Base de données : SQLite (dev), PostgreSQL via POSTGRES_* ou DATABASE_URL (Render).
+_database_url = env("DATABASE_URL")
+if _database_url:
+    try:
+        import dj_database_url
+
+        DATABASES = {
+            "default": dj_database_url.config(
+                default=_database_url,
+                conn_max_age=600,
+                ssl_require=env_bool("DATABASE_SSL_REQUIRE", not DEBUG),
+            )
+        }
+    except ImportError:
+        # Fallback minimal si dj-database-url absent
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": env("POSTGRES_DB", "doto"),
+                "USER": env("POSTGRES_USER", "postgres"),
+                "PASSWORD": env("POSTGRES_PASSWORD", ""),
+                "HOST": env("POSTGRES_HOST", "127.0.0.1"),
+                "PORT": env("POSTGRES_PORT", "5432"),
+            }
+        }
+elif env("POSTGRES_DB"):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -130,10 +155,26 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+    },
+}
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
-# Base publique pour URLs absolues media (apps BlueStacks / LAN).
+# Base publique pour URLs absolues media (apps BlueStacks / LAN / Render).
 PUBLIC_API_BASE = env("PUBLIC_API_BASE", "http://127.0.0.1:8000")
+
+# Render / reverse-proxy HTTPS
+if env_bool("DJANGO_BEHIND_PROXY", False) or env("RENDER"):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    CSRF_TRUSTED_ORIGINS = env_list(
+        "CSRF_TRUSTED_ORIGINS",
+        env("RENDER_EXTERNAL_URL", ""),
+    )
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -226,7 +267,7 @@ CACHES = {
 # Identité produit
 PRODUCT_NAME = "DOTO+"
 BRAND = "DOTO+"
-CARD_PRODUCT = "DodoCard"
+CARD_PRODUCT = "DotoCard"
 
 # Consentement d'accès dossier (TTL minutes)
 # 10 min : laisse le temps au patient de voir la demande (polling RN ~4s).

@@ -1,4 +1,4 @@
-"""DodoCard — carte d'accès QR (table `tokens_qr`, CDC §2)."""
+"""DotoCard — carte d'accès QR (table `tokens_qr`, CDC §2)."""
 from datetime import timedelta
 
 from django.conf import settings
@@ -12,7 +12,7 @@ from . import services
 
 class DodoCard(models.Model):
     """
-    Carte d'accès physique DodoCard reliée à un patient.
+    Carte d'accès physique DotoCard reliée à un patient.
 
     Le token chiffré est la seule donnée présente dans le QR. En cas de
     perte, le token est révoqué côté serveur (< 1 min) sans compromettre
@@ -51,12 +51,12 @@ class DodoCard(models.Model):
     )
 
     class Meta:
-        verbose_name = "DodoCard"
-        verbose_name_plural = "DodoCards"
+        verbose_name = "DotoCard"
+        verbose_name_plural = "DotoCards"
         ordering = ["-date_creation"]
 
     def __str__(self):
-        return f"DodoCard {self.patient.npi} — {self.get_statut_display()}"
+        return f"DotoCard {self.patient.npi} — {self.get_statut_display()}"
 
     @property
     def is_active(self):
@@ -67,7 +67,7 @@ class DodoCard(models.Model):
 
     @classmethod
     def issue(cls, patient, validity_years=5, cvv=""):
-        """Émet une nouvelle DodoCard (validité 5 ans, CDC §2.1)."""
+        """Émet une nouvelle DotoCard (validité 5 ans, CDC §2.1)."""
         token = services.generate_token(patient.npi)
         return cls.objects.create(
             patient=patient,

@@ -8,6 +8,8 @@ from rest_framework.response import Response
 
 from audit.utils import log_action
 from core.permissions import ReadOnlyOrRole, Roles, SECTION_READ_ROLES
+from notifications.models import Notification
+from notifications.services import notify_patient_dossier_change
 from patients.access import grant_allows_full, has_active_grant
 
 from .models import Consultation, ConstanteVitale, Examen, Ordonnance
@@ -99,7 +101,18 @@ class ConsultationViewSet(PatientScopedMixin, viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(medecin=self.request.user)
+        consultation = serializer.save(medecin=self.request.user)
+        med = self.request.user.get_full_name() or self.request.user.username
+        notify_patient_dossier_change(
+            consultation.patient,
+            title="Nouvelle consultation",
+            body=f"Une consultation a été ajoutée à votre dossier par {med}.",
+            notif_type=Notification.Type.DOSSIER_UPDATED,
+            event_type="dossier_updated",
+            section="dossier",
+            payload={"kind": "consultation", "consultation_id": consultation.id},
+            actor=self.request.user,
+        )
 
     @action(detail=True, methods=["post"])
     def annuler(self, request, pk=None):
@@ -129,6 +142,16 @@ class ConsultationViewSet(PatientScopedMixin, viewsets.ModelViewSet):
             "annuler_consultation",
             target=f"consultation:{pk}",
             patient_npi=consultation.patient.npi,
+        )
+        notify_patient_dossier_change(
+            consultation.patient,
+            title="Consultation annulée",
+            body="Une consultation de votre dossier a été annulée.",
+            notif_type=Notification.Type.DOSSIER_UPDATED,
+            event_type="dossier_updated",
+            section="dossier",
+            payload={"kind": "consultation_annulee", "consultation_id": consultation.id},
+            actor=request.user,
         )
         return Response(ConsultationSerializer(consultation).data)
 
@@ -186,6 +209,17 @@ class OrdonnanceViewSet(PatientScopedMixin, viewsets.ModelViewSet):
             self.request, "creer_ordonnance",
             target=f"ordonnance:{ordonnance.id}", patient_npi=ordonnance.patient.npi,
         )
+        med = self.request.user.get_full_name() or self.request.user.username
+        notify_patient_dossier_change(
+            ordonnance.patient,
+            title="Nouvelle ordonnance",
+            body=f"Une ordonnance a été prescrite par {med}.",
+            notif_type=Notification.Type.ORDONNANCE,
+            event_type="ordonnance",
+            section="ordonnances",
+            payload={"kind": "ordonnance", "ordonnance_id": ordonnance.id},
+            actor=self.request.user,
+        )
 
     @action(detail=True, methods=["post"])
     def dispenser(self, request, pk=None):
@@ -210,6 +244,16 @@ class OrdonnanceViewSet(PatientScopedMixin, viewsets.ModelViewSet):
         ordonnance.save(update_fields=["statut", "dispensee_le", "dispensee_par"])
         log_action(request, "dispenser_ordonnance", target=f"ordonnance:{pk}",
                    patient_npi=ordonnance.patient.npi)
+        notify_patient_dossier_change(
+            ordonnance.patient,
+            title="Ordonnance dispensée",
+            body="Votre ordonnance a été délivrée en pharmacie.",
+            notif_type=Notification.Type.ORDONNANCE,
+            event_type="ordonnance",
+            section="ordonnances",
+            payload={"kind": "ordonnance_dispensee", "ordonnance_id": ordonnance.id},
+            actor=request.user,
+        )
         return Response(OrdonnanceSerializer(ordonnance).data)
 
     @action(detail=True, methods=["post"])
@@ -319,6 +363,16 @@ class ExamenViewSet(PatientScopedMixin, viewsets.ModelViewSet):
         examen = serializer.save(laborantin=self.request.user)
         log_action(self.request, "upload_examen", target=examen.type_examen,
                    patient_npi=examen.patient.npi)
+        notify_patient_dossier_change(
+            examen.patient,
+            title="Nouvel examen",
+            body=f"Résultat disponible : {examen.type_examen or 'examen'}.",
+            notif_type=Notification.Type.EXAMEN,
+            event_type="examen",
+            section="examens",
+            payload={"kind": "examen", "examen_id": examen.id},
+            actor=self.request.user,
+        )
 
     @action(detail=True, methods=["post"])
     def annuler(self, request, pk=None):
@@ -370,6 +424,16 @@ class ExamenViewSet(PatientScopedMixin, viewsets.ModelViewSet):
         examen.save(update_fields=["fichier"])
         log_action(request, "upload_fichier_examen", target=examen.type_examen,
                    patient_npi=examen.patient.npi)
+        notify_patient_dossier_change(
+            examen.patient,
+            title="Examen mis à jour",
+            body=f"Un fichier a été ajouté à : {examen.type_examen or 'examen'}.",
+            notif_type=Notification.Type.EXAMEN,
+            event_type="examen",
+            section="examens",
+            payload={"kind": "examen_fichier", "examen_id": examen.id},
+            actor=request.user,
+        )
         return Response(ExamenSerializer(examen, context={"request": request}).data)
 
 

@@ -1,4 +1,4 @@
-"""Pub/sub mémoire pour le flux SSE DotoHub (scan DodoCard → ouverture dossier).
+"""Pub/sub mémoire pour le flux SSE DotoHub (scan DotoCard → ouverture dossier).
 
 Canal clé = user_id du professionnel. Suffisant pour une démo locale ;
 en production multi-workers, remplacer par Redis pub/sub.
@@ -16,7 +16,7 @@ class HubEventBus:
         self._channels: dict[int, list[queue.Queue]] = {}
 
     def subscribe(self, user_id: int) -> queue.Queue:
-        q: queue.Queue = queue.Queue(maxsize=32)
+        q: queue.Queue = queue.Queue(maxsize=64)
         with self._lock:
             self._channels.setdefault(user_id, []).append(q)
         return q

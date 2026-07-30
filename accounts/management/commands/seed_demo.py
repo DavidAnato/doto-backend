@@ -1,7 +1,7 @@
 """Jeu de données de démonstration DOTO+.
 
 Crée : structures multiples, nombreux comptes pro (tous rôles), patients
-avec DodoCards, et un dossier médical complet pour le patient principal.
+avec DotoCards, et un dossier médical complet pour le patient principal.
 """
 from datetime import date, datetime, timedelta
 
@@ -499,7 +499,7 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"Données prêtes — {n_pros} pros, {n_patients} patients, {n_cards} DodoCards actives.\n\n"
+                f"Données prêtes — {n_pros} pros, {n_patients} patients, {n_cards} DotoCards actives.\n\n"
                 f"{CREDENTIALS_NOTE}"
             )
         )

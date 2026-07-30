@@ -78,3 +78,73 @@ def notify_admins(
         notify_user(u, title=title, body=body, type=type, payload=payload)
         count += 1
     return count
+
+
+def notify_patient_dossier_change(
+    patient,
+    *,
+    title: str,
+    body: str = "",
+    notif_type: str = Notification.Type.DOSSIER_UPDATED,
+    event_type: str | None = None,
+    section: str | None = None,
+    payload: dict[str, Any] | None = None,
+    actor=None,
+) -> Notification | None:
+    """Notifie le patient (in-app + SSE + push) et diffuse un event typé aux sessions pro.
+
+    event_type SSE (canal patient + acteur) :
+      dossier_updated | ordonnance | examen | appointment
+    section payload (badges Mon dossier) :
+      dossier | ordonnances | examens | assurance | rdv
+    """
+    ev = event_type or notif_type
+    section_key = section or {
+        Notification.Type.ORDONNANCE: "ordonnances",
+        Notification.Type.EXAMEN: "examens",
+        Notification.Type.DOSSIER_UPDATED: "dossier",
+    }.get(notif_type, "dossier")
+
+    data: dict[str, Any] = {
+        **(payload or {}),
+        "patient_id": getattr(patient, "pk", None) or getattr(patient, "id", None),
+        "section": section_key,
+    }
+
+    notif: Notification | None = None
+    user = getattr(patient, "user", None)
+    if user is not None:
+        notif = notify_user(
+            user,
+            title=title,
+            body=body,
+            type=notif_type,
+            payload=data,
+        )
+        # Event typé en plus de « notification » — invalidations ciblées côté client
+        hub_bus.publish(
+            user.id,
+            {
+                "type": ev,
+                "patient_id": data["patient_id"],
+                "notif_type": notif_type,
+                "title": title[:160],
+                "body": body or "",
+                "payload": data,
+                "ts": timezone.now().isoformat(),
+            },
+        )
+
+    actor_id = getattr(actor, "id", None)
+    if actor_id and (user is None or actor_id != user.id):
+        hub_bus.publish(
+            actor_id,
+            {
+                "type": ev,
+                "patient_id": data["patient_id"],
+                "notif_type": notif_type,
+                "payload": data,
+                "ts": timezone.now().isoformat(),
+            },
+        )
+    return notif

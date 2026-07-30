@@ -363,19 +363,21 @@ def create_access_request(
             patient_npi=patient.npi,
         )
 
-    # Pro : état pending (pas d'ouverture dossier)
-    hub_bus.publish(
-        requester.id,
-        {
-            "type": "access_pending",
-            "access_request_id": req.id,
-            "patient_id": patient.id,
-            "npi": patient.npi,
-            "full_name": patient.full_name,
-            "expires_at": req.expires_at.isoformat(),
-            "ts": now.isoformat(),
-        },
-    )
+    # Pro : état pending. Mode SCAN : ScanView publie déjà `dodocard_scan`
+    # (évite double toast / nav sur le Hub).
+    if mode != AccessRequest.Mode.SCAN:
+        hub_bus.publish(
+            requester.id,
+            {
+                "type": "access_pending",
+                "access_request_id": req.id,
+                "patient_id": patient.id,
+                "npi": patient.npi,
+                "full_name": patient.full_name,
+                "expires_at": req.expires_at.isoformat(),
+                "ts": now.isoformat(),
+            },
+        )
     return req
 
 
@@ -553,6 +555,11 @@ def revoke_access_grant(req: AccessRequest, *, patient_user) -> AccessRequest:
         target=f"access:{req.id}",
         patient_npi=req.patient.npi,
     )
+    msg = (
+        f"{req.patient.full_name} a retiré l'accès à son dossier. "
+        "Le dossier se ferme."
+    )
+    # Event typé prioritaire (fermeture dossier temps réel côté Hub web + mobile)
     hub_bus.publish(
         req.requester_id,
         {
@@ -561,15 +568,23 @@ def revoke_access_grant(req: AccessRequest, *, patient_user) -> AccessRequest:
             "patient_id": req.patient_id,
             "npi": req.patient.npi,
             "full_name": req.patient.full_name,
+            "message": msg,
+            "close_dossier": True,
             "ts": now.isoformat(),
         },
     )
     notify_user(
         req.requester,
         title="Accès révoqué par le patient",
-        body=f"{req.patient.full_name} a retiré l'accès à son dossier.",
+        body=msg,
         type=Notification.Type.ACCESS_DENIED,
-        payload={"access_request_id": req.id, "patient_id": req.patient_id, "revoked": True},
+        payload={
+            "access_request_id": req.id,
+            "patient_id": req.patient_id,
+            "revoked": True,
+            "close_dossier": True,
+            "message": msg,
+        },
     )
     notify_user(
         patient_user,

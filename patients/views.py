@@ -464,7 +464,9 @@ class MonDossierView(viewsets.ViewSet):
                     many=True,
                 ).data,
                 "ordonnances": OrdonnanceSerializer(
-                    patient.ordonnances.prefetch_related("medicaments").all()[:50],
+                    patient.ordonnances.select_related("medecin", "structure")
+                    .prefetch_related("medicaments")
+                    .all()[:50],
                     many=True,
                 ).data,
                 "examens": ExamenSerializer(

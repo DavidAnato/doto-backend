@@ -1,5 +1,5 @@
 """
-Tokens DodoCard (QR).
+Tokens DotoCard (QR).
 
 La carte est une CARTE D'ACCÈS : le QR ne contient aucune donnée médicale.
 Un token opaque court (aléatoire) suffit — la sécurité repose sur :

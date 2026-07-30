@@ -4,14 +4,21 @@ from .models import Consultation, ConstanteVitale, Examen, Medicament, Ordonnanc
 
 
 class ConsultationSerializer(serializers.ModelSerializer):
-    structure_nom = serializers.CharField(source="structure.nom", read_only=True)
-    medecin_nom = serializers.CharField(source="medecin.get_full_name", read_only=True)
+    structure_nom = serializers.CharField(source="structure.nom", read_only=True, allow_null=True)
+    structure_telephone = serializers.CharField(
+        source="structure.telephone", read_only=True, allow_blank=True, allow_null=True, default=""
+    )
+    medecin_nom = serializers.CharField(source="medecin.get_full_name", read_only=True, allow_null=True)
+    medecin_telephone = serializers.CharField(
+        source="medecin.telephone", read_only=True, allow_blank=True, allow_null=True, default=""
+    )
     type_label = serializers.CharField(source="get_type_display", read_only=True)
 
     class Meta:
         model = Consultation
         fields = [
-            "id", "patient", "structure", "structure_nom", "medecin", "medecin_nom",
+            "id", "patient", "structure", "structure_nom", "structure_telephone",
+            "medecin", "medecin_nom", "medecin_telephone",
             "date", "type", "type_label", "diagnostic", "notes", "annule", "created_at",
         ]
         read_only_fields = ["medecin", "annule"]
@@ -25,7 +32,10 @@ class MedicamentSerializer(serializers.ModelSerializer):
 
 class OrdonnanceSerializer(serializers.ModelSerializer):
     medicaments = MedicamentSerializer(many=True)
-    medecin_nom = serializers.CharField(source="medecin.get_full_name", read_only=True)
+    medecin_nom = serializers.CharField(source="medecin.get_full_name", read_only=True, allow_null=True)
+    medecin_telephone = serializers.CharField(
+        source="medecin.telephone", read_only=True, allow_blank=True, allow_null=True, default=""
+    )
     patient_nom = serializers.CharField(source="patient.full_name", read_only=True)
     patient_npi = serializers.CharField(source="patient.npi", read_only=True)
     structure_nom = serializers.CharField(source="structure.nom", read_only=True, allow_null=True)
@@ -35,7 +45,7 @@ class OrdonnanceSerializer(serializers.ModelSerializer):
         model = Ordonnance
         fields = [
             "id", "patient", "patient_nom", "patient_npi", "medecin", "medecin_nom",
-            "structure", "structure_nom", "consultation",
+            "medecin_telephone", "structure", "structure_nom", "consultation",
             "date", "statut", "statut_label", "instructions", "signature_electronique",
             "alertes_interactions", "dispensee_le", "medicaments", "created_at",
         ]

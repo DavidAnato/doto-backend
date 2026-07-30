@@ -7,7 +7,7 @@ from django.utils import timezone
 
 
 class Patient(models.Model):
-    """Titulaire de la carte DodoCard (table `patients`, CDC §6.3)."""
+    """Titulaire de la carte DotoCard (table `patients`, CDC §6.3)."""
 
     class GroupeSanguin(models.TextChoices):
         A_POS = "A+", "A+"
@@ -51,7 +51,7 @@ class Patient(models.Model):
     sexe = models.CharField(
         max_length=1, choices=[("M", "Masculin"), ("F", "Féminin")], blank=True
     )
-    # Verso DodoCard — filiation & adresse de résidence
+    # Verso DotoCard — filiation & adresse de résidence
     nom_pere = models.CharField("Nom du père", max_length=120, blank=True)
     nom_mere = models.CharField("Nom de la mère", max_length=120, blank=True)
     adresse_commune = models.CharField("Commune", max_length=120, blank=True)
@@ -197,7 +197,7 @@ class AccessRequest(models.Model):
         CANCELLED = "cancelled", "Annulé (pro)"
 
     class Mode(models.TextChoices):
-        SCAN = "scan", "Scan DodoCard"
+        SCAN = "scan", "Scan DotoCard"
         SEARCH = "search", "Recherche / ouverture"
         EMERGENCY = "emergency", "Mode urgence"
 

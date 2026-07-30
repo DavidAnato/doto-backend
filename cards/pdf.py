@@ -1,4 +1,4 @@
-"""Génération PDF imprimable DodoCard — faces Assuré / Non assuré (marque DOTO+)."""
+"""Génération PDF imprimable DotoCard — faces Assuré / Non assuré (marque DOTO+)."""
 from __future__ import annotations
 
 import io
@@ -327,7 +327,7 @@ def build_dodocard_pdf(card) -> bytes:
     c.setFont("Helvetica-Bold", 18)
     c.drawString(18 * mm, height - 14 * mm, "DOTO+")
     c.setFont("Helvetica", 10)
-    c.drawString(18 * mm, height - 21 * mm, "DodoCard — carte d'accès santé · République du Bénin")
+    c.drawString(18 * mm, height - 21 * mm, "DotoCard — carte d'accès santé · République du Bénin")
 
     logo = _logo_path()
     if logo:
