@@ -180,7 +180,11 @@ if _HAS_WHITENOISE:
     }
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
-PUBLIC_API_BASE = env("PUBLIC_API_BASE", "http://127.0.0.1:8000")
+PUBLIC_API_BASE = env(
+    "PUBLIC_API_BASE",
+    env("RENDER_EXTERNAL_URL")
+    or ("https://doto-backend-71tk.onrender.com" if env("RENDER") else "http://127.0.0.1:8000"),
+)
 
 # Render / reverse-proxy HTTPS
 if env_bool("DJANGO_BEHIND_PROXY", False) or env("RENDER"):

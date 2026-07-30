@@ -48,8 +48,8 @@ Copie **toutes** ces lignes (une seule Build Command) :
 pip install --upgrade pip && pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate --noinput
 ```
 
-> Le seed **n’est pas** dans le build (évite de re-seeder à chaque deploy).
-> Lance-le une fois via Shell (étape 5).
+> `runtime.txt` force **Python 3.11** (évite l’échec `rapidocr` / wheels 3.13).  
+> L’OCR pièce d’identité n’est **pas** dans `requirements.txt` (trop lourd pour Render) — voir `requirements-ocr.txt` en local.
 
 ---
 
