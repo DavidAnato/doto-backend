@@ -3,6 +3,9 @@ Configuration Django — API DOTO+.
 
 Écosystème santé numérique béninois : carte d'accès QR (DotoCard),
 plateforme web pro (DotoHub), app patient (DotoPlus) et back-office (DotoPlus Admin).
+
+Le fichier `.env` est **optionnel** : sans lui, le mode dév/test démarre
+avec SQLite, CORS ouvert, CSRF assoupli, OTP mock, etc.
 """
 from datetime import timedelta
 from pathlib import Path
@@ -11,7 +14,8 @@ from dotenv import load_dotenv
 import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
+# Ignore silencieusement l'absence de .env
+load_dotenv(BASE_DIR / ".env", override=False)
 
 
 def env(key, default=None):
@@ -31,13 +35,15 @@ def env_list(key, default=""):
 
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", "dev-insecure-change-me-in-production-dotoplus")
+# Défaut True : dév / démo / smoke — passer DJANGO_DEBUG=False en prod réelle
 DEBUG = env_bool("DJANGO_DEBUG", True)
 ALLOWED_HOSTS = env_list(
     "DJANGO_ALLOWED_HOSTS",
-    "localhost,127.0.0.1,testserver,192.168.100.3,10.0.2.2,0.0.0.0,*",
+    # `*` = tous les hôtes (LAN, hotspot, Render, Expo) — adapté dév/test
+    "*",
 )
 
-# Clé de chiffrement AES-256 pour les tokens QR (Fernet). Générée si absente.
+# Fernet optionnel : si vide, cards.services dérive depuis SECRET_KEY
 CARD_TOKEN_KEY = env("CARD_TOKEN_KEY", "")
 
 INSTALLED_APPS = [
@@ -64,7 +70,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "config.middleware.OpenSecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -73,6 +79,15 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "audit.middleware.AuditLogMiddleware",
 ]
+
+# WhiteNoise optionnel (prod / collectstatic) — ne bloque pas le démarrage sans package
+try:
+    import whitenoise  # noqa: F401
+
+    MIDDLEWARE.insert(2, "whitenoise.middleware.WhiteNoiseMiddleware")
+    _HAS_WHITENOISE = True
+except ImportError:
+    _HAS_WHITENOISE = False
 
 ROOT_URLCONF = "config.urls"
 
@@ -109,7 +124,6 @@ if _database_url:
             )
         }
     except ImportError:
-        # Fallback minimal si dj-database-url absent
         DATABASES = {
             "default": {
                 "ENGINE": "django.db.backends.postgresql",
@@ -155,30 +169,25 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STORAGES = {
-    "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
-    },
-    "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
-    },
-}
+if _HAS_WHITENOISE:
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+        },
+    }
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
-# Base publique pour URLs absolues media (apps BlueStacks / LAN / Render).
 PUBLIC_API_BASE = env("PUBLIC_API_BASE", "http://127.0.0.1:8000")
 
 # Render / reverse-proxy HTTPS
 if env_bool("DJANGO_BEHIND_PROXY", False) or env("RENDER"):
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-    CSRF_TRUSTED_ORIGINS = env_list(
-        "CSRF_TRUSTED_ORIGINS",
-        env("RENDER_EXTERNAL_URL", ""),
-    )
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# ─── Django REST Framework ──────────────────────────────────────────────
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
@@ -197,8 +206,6 @@ REST_FRAMEWORK = {
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%S%z",
 }
 
-# JWT access/refresh (CDC historique ~5–10 min access — défaut env 60 min pour démos).
-# Inactivité UI côté front (idle logout) est séparée ; refresh auto sur 401 côté clients.
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(env("ACCESS_TOKEN_MINUTES", "60"))),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=int(env("REFRESH_TOKEN_DAYS", "7"))),
@@ -206,9 +213,9 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
-# ─── CORS (frontends DotoHub / DotoPlus Admin / Expo) ───────────────────
-# En DEBUG : tout autorisé (hotspot, LAN, Expo). En prod : liste explicite.
-CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", DEBUG)
+# ─── CORS / CSRF — dév/test ouvert par défaut (pas de .env requis) ───────
+# Forcer DJANGO_DEBUG=False + CORS_ALLOW_ALL_ORIGINS=False en prod stricte.
+CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", True)
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173,"
@@ -231,32 +238,37 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
 ]
 CORS_ALLOW_METHODS = ["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"]
-CSRF_TRUSTED_ORIGINS = env_list(
-    "CSRF_TRUSTED_ORIGINS",
+# Liste large + middleware OpenSecurityMiddleware assouplit encore si OPEN_CSRF
+_csrf_defaults = (
     "http://localhost:5173,http://127.0.0.1:5173,"
+    "http://localhost:5174,http://127.0.0.1:5174,"
+    "http://localhost:8081,http://127.0.0.1:8081,"
+    "http://localhost:19006,http://127.0.0.1:19006,"
     "http://192.168.137.1:5173,http://192.168.100.3:5173,"
-    "http://localhost:5174,http://127.0.0.1:5174",
+    "http://10.0.2.2:5173"
 )
+_render_url = env("RENDER_EXTERNAL_URL", "")
+if _render_url:
+    _csrf_defaults = f"{_csrf_defaults},{_render_url}"
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", _csrf_defaults)
+# Si CORS tout ouvert : ne pas exiger Origin CSRF stricte (JWT porte l'auth)
+OPEN_CSRF = env_bool("OPEN_CSRF", DEBUG or CORS_ALLOW_ALL_ORIGINS)
 
-# ─── Sécurité connexion (CDC §3.2 / §6.2) ───────────────────────────────
 LOGIN_MAX_ATTEMPTS = int(env("LOGIN_MAX_ATTEMPTS", "3"))
 LOGIN_LOCKOUT_MINUTES = int(env("LOGIN_LOCKOUT_MINUTES", "15"))
 PATIENT_PIN_MAX_ATTEMPTS = int(env("PATIENT_PIN_MAX_ATTEMPTS", "5"))
 
-# OTP / SMS (interface SmsProvider — mock par défaut, Twilio en stub).
 DEMO_OTP_CODE = env("DEMO_OTP_CODE", "000000")
-SMS_PROVIDER = env("SMS_PROVIDER", "mock")  # mock | twilio
+SMS_PROVIDER = env("SMS_PROVIDER", "mock")
 OTP_TTL_SECONDS = int(env("OTP_TTL_SECONDS", "300"))
 TWILIO_ACCOUNT_SID = env("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = env("TWILIO_AUTH_TOKEN", "")
 TWILIO_FROM_NUMBER = env("TWILIO_FROM_NUMBER", "")
 
-# ANIP (interface AnipClient — mock par défaut, HTTP stub).
-ANIP_PROVIDER = env("ANIP_PROVIDER", "mock")  # mock | http
+ANIP_PROVIDER = env("ANIP_PROVIDER", "mock")
 ANIP_BASE_URL = env("ANIP_BASE_URL", "")
 ANIP_API_KEY = env("ANIP_API_KEY", "")
 
-# Cache mémoire pour OTP (dev). En prod : Redis recommandé.
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
@@ -264,16 +276,12 @@ CACHES = {
     }
 }
 
-# Identité produit
 PRODUCT_NAME = "DOTO+"
 BRAND = "DOTO+"
 CARD_PRODUCT = "DotoCard"
 
-# Consentement d'accès dossier (TTL minutes)
-# 10 min : laisse le temps au patient de voir la demande (polling RN ~4s).
 ACCESS_REQUEST_TTL_MINUTES = int(env("ACCESS_REQUEST_TTL_MINUTES", "10"))
 ACCESS_GRANT_TTL_MINUTES = int(env("ACCESS_GRANT_TTL_MINUTES", "60"))
 ACCESS_EMERGENCY_GRANT_TTL_MINUTES = int(env("ACCESS_EMERGENCY_GRANT_TTL_MINUTES", "30"))
 
-# Push Expo (optionnel — sans token : mock/log uniquement)
 EXPO_ACCESS_TOKEN = env("EXPO_ACCESS_TOKEN", "")

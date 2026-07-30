@@ -20,23 +20,23 @@ Guide complet : build → migrate → collectstatic → seeddata → serveur.
 
 ## 2. Variables d’environnement (Web Service)
 
-| Variable | Valeur |
-|----------|--------|
-| `DJANGO_SECRET_KEY` | chaîne aléatoire longue |
-| `DJANGO_DEBUG` | `False` |
-| `DJANGO_ALLOWED_HOSTS` | `.onrender.com` (ou ton domaine) |
-| `DJANGO_BEHIND_PROXY` | `True` |
-| `DATABASE_URL` | *(souvent auto-injectée si tu linkes le Postgres)* |
-| `CARD_TOKEN_KEY` | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-| `CORS_ALLOW_ALL_ORIGINS` | `False` |
-| `CORS_ALLOWED_ORIGINS` | URLs front (ex. `https://dotohub.onrender.com,https://dotoplus-admin.onrender.com`) |
-| `PUBLIC_API_BASE` | `https://<ton-service>.onrender.com` |
-| `SMS_PROVIDER` | `mock` (ou twilio) |
-| `DEMO_OTP_CODE` | `000000` |
-| `ACCESS_TOKEN_MINUTES` | `60` |
-| `REFRESH_TOKEN_DAYS` | `7` |
+> En dév local : **aucune variable obligatoire**.  
+> Sur Render, renseigner au minimum `DATABASE_URL` (auto si Postgres lié) et idéalement `DJANGO_SECRET_KEY`.  
+> CORS/CSRF restent ouverts par défaut (`CORS_ALLOW_ALL_ORIGINS=True`) tant que tu ne les désactives pas — adapté démo/test.
 
-Optionnel : `CSRF_TRUSTED_ORIGINS=https://<ton-service>.onrender.com`
+| Variable | Valeur | Obligatoire ? |
+|----------|--------|---------------|
+| `DATABASE_URL` | Internal DB URL Render | Oui (prod Postgres) |
+| `DJANGO_SECRET_KEY` | chaîne aléatoire | Recommandé |
+| `DJANGO_DEBUG` | `False` en prod stricte (défaut code = `True`) | Optionnel |
+| `DJANGO_ALLOWED_HOSTS` | `*` ou `.onrender.com` | Optionnel (`*` par défaut) |
+| `DJANGO_BEHIND_PROXY` | `True` | Recommandé sur Render |
+| `CARD_TOKEN_KEY` | Fernet key | Non (dérivé de SECRET_KEY) |
+| `PUBLIC_API_BASE` | `https://<service>.onrender.com` | Recommandé (URLs media) |
+| `CORS_ALLOW_ALL_ORIGINS` | `True` (défaut) / `False` en durcissement | Non |
+| `OPEN_CSRF` | `True` (défaut si DEBUG/CORS open) | Non |
+| `DEMO_OTP_CODE` | `000000` | Non (déjà défaut) |
+
 
 ---
 
@@ -94,8 +94,7 @@ python -m venv .venv
 # Unix:    source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
-copy .env.example .env   # ou cp .env.example .env
-# renseigner CARD_TOKEN_KEY + éventuel DATABASE_URL
+# .env optionnel — sans fichier : SQLite + CORS/CSRF ouverts
 python manage.py collectstatic --noinput
 python manage.py migrate --noinput
 python manage.py seeddata

@@ -32,7 +32,9 @@ services:
       - key: CARD_TOKEN_KEY
         sync: false
       - key: CORS_ALLOW_ALL_ORIGINS
-        value: "False"
+        value: "True"
+      - key: OPEN_CSRF
+        value: "True"
       - key: SMS_PROVIDER
         value: mock
       - key: DEMO_OTP_CODE

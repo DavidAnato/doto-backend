@@ -30,12 +30,14 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-copy .env.example .env        # cp sous macOS/Linux
 python manage.py migrate
 python manage.py seeddata
 # (alias) python manage.py seed_demo
 python manage.py runserver 8000
 ```
+
+> **Pas de `.env` requis** en dév/test : SQLite, CORS ouvert, CSRF assoupli, OTP `000000`.
+> Un `.env` reste optionnel pour override (voir `.env.example`).
 
 - API : http://127.0.0.1:8000/api/health/
 - Admin Django : http://127.0.0.1:8000/admin/
