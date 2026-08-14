@@ -1,13 +1,13 @@
-from django.contrib.auth import get_user_model
 from rest_framework import serializers
+
+from core.contracts import PIN_ERROR, PIN_REGEX, OTP_ERROR, OTP_REGEX, HOSPITAL_REQUIRED_ROLES
 
 from .models import StructureSante
 from .photo_utils import user_photo_url
 
-User = get_user_model()
+from django.contrib.auth import get_user_model
 
-PIN_REGEX = r"^\d{5}$"
-PIN_ERROR = "Le PIN doit contenir exactement 5 chiffres."
+User = get_user_model()
 
 
 class StructureSanteSerializer(serializers.ModelSerializer):
@@ -21,6 +21,8 @@ class StructureSanteSerializer(serializers.ModelSerializer):
         fields = [
             "id", "nom", "type", "type_label", "localisation",
             "code_structure", "statut_partenaire", "telephone",
+            "catalog_id", "full_name", "ownership", "department",
+            "commune", "address", "latitude", "longitude",
             "nb_professionnels", "created_at",
         ]
 
@@ -43,6 +45,7 @@ class UserSerializer(serializers.ModelSerializer):
             "id", "username", "first_name", "last_name", "full_name",
             "email", "telephone", "role", "role_label", "actif",
             "is_locked", "structures", "structure_ids", "structure_principale",
+            "specialite",
             "photo_url", "photo_required", "pin_set", "date_joined",
         ]
         read_only_fields = ["is_locked", "date_joined", "photo_url", "photo_required", "pin_set"]
@@ -52,7 +55,6 @@ class UserSerializer(serializers.ModelSerializer):
         return user_photo_url(obj, request=request)
 
     def get_photo_required(self, obj):
-        # seed_* masqués → pas d'URL affichable → photo encore requise
         request = self.context.get("request")
         return not bool(user_photo_url(obj, request=request))
 
@@ -69,8 +71,31 @@ class UserWriteSerializer(serializers.ModelSerializer):
         fields = [
             "id", "username", "first_name", "last_name", "email",
             "telephone", "role", "actif", "password",
-            "structure_ids", "structure_principale", "photo",
+            "structure_ids", "structure_principale", "specialite", "photo",
         ]
+
+    def validate(self, attrs):
+        role = attrs.get("role") or getattr(self.instance, "role", None)
+        structures = attrs.get("structures")
+        principale = attrs.get("structure_principale")
+        creating = self.instance is None
+        needs = role in HOSPITAL_REQUIRED_ROLES
+        if creating and needs:
+            if not structures:
+                raise serializers.ValidationError(
+                    {"structure_ids": "Choisissez au moins un hôpital."}
+                )
+            if not principale:
+                raise serializers.ValidationError(
+                    {"structure_principale": "Désignez l'hôpital principal."}
+                )
+        if principale and structures is not None:
+            ids = [s.pk for s in structures]
+            if ids and principale.pk not in ids:
+                raise serializers.ValidationError(
+                    {"structure_principale": "Le principal doit faire partie des hôpitaux choisis."}
+                )
+        return attrs
 
     def create(self, validated_data):
         password = validated_data.pop("password", None) or User.objects.make_random_password()
@@ -102,7 +127,13 @@ class MeUpdateSerializer(serializers.Serializer):
     last_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
     telephone = serializers.CharField(required=False, allow_blank=True, max_length=30)
     email = serializers.EmailField(required=False, allow_blank=True)
-    # Flags sécurité patient (ignorés pour les pros)
+    specialite = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    structure_principale = serializers.PrimaryKeyRelatedField(
+        required=False, allow_null=True, queryset=StructureSante.objects.all()
+    )
+    structure_ids = serializers.PrimaryKeyRelatedField(
+        many=True, required=False, queryset=StructureSante.objects.all()
+    )
     require_unlock = serializers.BooleanField(required=False)
     urgence_when_locked = serializers.BooleanField(required=False)
 
@@ -120,7 +151,7 @@ class RequestOtpSerializer(serializers.Serializer):
     PURPOSE_CHOICES = ("login", "register", "password_change", "password_reset")
 
     phone = serializers.CharField(required=False, allow_blank=True)
-    username = serializers.CharField(required=False, allow_blank=True)  # legacy ignoré
+    username = serializers.CharField(required=False, allow_blank=True)
     purpose = serializers.ChoiceField(choices=PURPOSE_CHOICES, default="login")
 
     def validate(self, attrs):
@@ -135,14 +166,20 @@ class PatientLoginSerializer(serializers.Serializer):
     """Connexion patient : téléphone + OTP uniquement (pas de mot de passe)."""
 
     phone = serializers.CharField()
-    otp = serializers.CharField()
+    otp = serializers.RegexField(
+        regex=OTP_REGEX,
+        error_messages={"invalid": OTP_ERROR},
+    )
 
 
 class PatientRegisterSerializer(serializers.Serializer):
     """Inscription patient — téléphone + OTP (+ identité OCR). Pas de mot de passe."""
 
     phone = serializers.CharField()
-    otp = serializers.CharField()
+    otp = serializers.RegexField(
+        regex=OTP_REGEX,
+        error_messages={"invalid": OTP_ERROR},
+    )
     first_name = serializers.CharField(required=False, allow_blank=True, default="")
     last_name = serializers.CharField(required=False, allow_blank=True, default="")
     npi = serializers.CharField(required=False, allow_blank=True, default="")
@@ -152,7 +189,6 @@ class PatientRegisterSerializer(serializers.Serializer):
     mother_name = serializers.CharField(required=False, allow_blank=True, default="")
     address_commune = serializers.CharField(required=False, allow_blank=True, default="")
     address_quartier = serializers.CharField(required=False, allow_blank=True, default="")
-    # Legacy : accepté mais ignoré (compat clients anciens)
     password = serializers.CharField(
         required=False, allow_blank=True, style={"input_type": "password"}
     )
@@ -162,12 +198,15 @@ class PatientPasswordChangeSerializer(serializers.Serializer):
     """Legacy — changement MDP patient via OTP (déprécié, comptes sans MDP)."""
 
     phone = serializers.CharField()
-    otp = serializers.CharField()
+    otp = serializers.RegexField(
+        regex=OTP_REGEX,
+        error_messages={"invalid": OTP_ERROR},
+    )
     new_password = serializers.CharField(min_length=6, style={"input_type": "password"})
 
 
 class PatientPinLoginSerializer(serializers.Serializer):
-    """Déverrouillage secondaire NPI + PIN 5 chiffres (hors connexion principale)."""
+    """Déverrouillage secondaire NPI + PIN 4 chiffres (hors connexion principale)."""
 
     npi = serializers.CharField()
     pin = serializers.RegexField(

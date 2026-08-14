@@ -15,6 +15,8 @@ class Notification(models.Model):
         DOSSIER_UPDATED = "dossier_updated", "Dossier mis à jour"
         ORDONNANCE = "ordonnance", "Ordonnance"
         EXAMEN = "examen", "Examen"
+        APPOINTMENT = "appointment", "Rendez-vous"
+        BON_EXAMEN = "bon_examen", "Bon d'examen"
         SYSTEM = "system", "Système"
         EMERGENCY = "emergency", "Urgence"
 

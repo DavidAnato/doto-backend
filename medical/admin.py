@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Consultation, ConstanteVitale, Examen, Medicament, Ordonnance
+from .models import BonExamen, Consultation, ConstanteVitale, Examen, Medicament, Ordonnance
 
 
 class MedicamentInline(admin.TabularInline):
@@ -10,9 +10,9 @@ class MedicamentInline(admin.TabularInline):
 
 @admin.register(Consultation)
 class ConsultationAdmin(admin.ModelAdmin):
-    list_display = ("patient", "date", "type", "diagnostic", "medecin")
-    list_filter = ("type",)
-    search_fields = ("patient__npi", "patient__nom", "diagnostic")
+    list_display = ("patient", "date", "type", "specialite", "diagnostic", "medecin", "structure")
+    list_filter = ("type", "specialite")
+    search_fields = ("patient__npi", "patient__nom", "diagnostic", "specialite")
 
 
 @admin.register(Ordonnance)
@@ -24,8 +24,14 @@ class OrdonnanceAdmin(admin.ModelAdmin):
 
 @admin.register(Examen)
 class ExamenAdmin(admin.ModelAdmin):
-    list_display = ("patient", "type_examen", "categorie", "statut", "date")
+    list_display = ("patient", "type_examen", "categorie", "statut", "date", "bon")
     list_filter = ("categorie", "statut")
+
+
+@admin.register(BonExamen)
+class BonExamenAdmin(admin.ModelAdmin):
+    list_display = ("id", "patient", "statut", "medecin", "laboratoire_nom", "created_at")
+    list_filter = ("statut",)
 
 
 @admin.register(ConstanteVitale)

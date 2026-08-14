@@ -36,7 +36,7 @@ Guide complet : build → migrate → collectstatic → seeddata → serveur.
 | `PUBLIC_API_BASE` | `https://<service>.onrender.com` | Recommandé (URLs media) |
 | `CORS_ALLOW_ALL_ORIGINS` | `True` (défaut) / `False` en durcissement | Non |
 | `OPEN_CSRF` | `True` (défaut si DEBUG/CORS open) | Non |
-| `DEMO_OTP_CODE` | `000000` | Non (déjà défaut) |
+| `DEMO_OTP_CODE` | `00000` | Non (déjà défaut) |
 
 
 ---
@@ -77,7 +77,7 @@ Render → ton Web Service → **Shell** :
 python manage.py seeddata
 ```
 
-Alias de `seed_demo` : structures, pros (`mdp123`), patients OTP mock `000000`, dossiers médicaux.
+Alias de `seed_demo` : structures, pros (`mdp123`), patients OTP mock `00000`, dossiers médicaux.
 
 Vérifier :
 
@@ -133,7 +133,7 @@ Env : `VITE_API_URL=https://<api>.onrender.com`
 
 1. `GET /api/health/` → 200  
 2. Login pro `medecin` / `mdp123`  
-3. Patient OTP `000000`  
+3. Patient OTP `00000`  
 4. Scan mobile + Hub web même compte → ouverture dossier (SSE)  
 5. Patient révoque l’accès → Hub ferme le dossier + message  
 

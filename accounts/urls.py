@@ -3,6 +3,8 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (
+    ContractsView,
+    HospitalCatalogView,
     IdCardOcrView,
     LogoutView,
     MePhotoView,
@@ -38,5 +40,7 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(), name="logout"),
     path("me/", MeView.as_view(), name="me"),
     path("me/photo/", MePhotoView.as_view(), name="me-photo"),
+    path("hospitals/", HospitalCatalogView.as_view(), name="hospital-catalog"),
+    path("contracts/", ContractsView.as_view(), name="api-contracts"),
     path("", include(router.urls)),
 ]

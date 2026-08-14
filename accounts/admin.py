@@ -16,6 +16,7 @@ class UserAdmin(BaseUserAdmin):
                     "role",
                     "telephone",
                     "photo",
+                    "specialite",
                     "structures",
                     "structure_principale",
                     "actif",
@@ -31,6 +32,6 @@ class UserAdmin(BaseUserAdmin):
 
 @admin.register(StructureSante)
 class StructureSanteAdmin(admin.ModelAdmin):
-    list_display = ("nom", "type", "localisation", "code_structure", "statut_partenaire")
-    list_filter = ("type", "statut_partenaire")
-    search_fields = ("nom", "code_structure")
+    list_display = ("nom", "type", "department", "commune", "localisation", "code_structure", "statut_partenaire")
+    list_filter = ("type", "statut_partenaire", "department", "ownership")
+    search_fields = ("nom", "full_name", "code_structure", "commune")

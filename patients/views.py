@@ -89,12 +89,36 @@ class PatientViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         if not role_can_write(request.user.role, "demographie"):
             raise PermissionDenied("Création patient réservée à la réception / admin / médecin.")
-        return super().create(request, *args, **kwargs)
+        response = super().create(request, *args, **kwargs)
+        patient_id = None
+        if isinstance(response.data, dict):
+            patient_id = response.data.get("id")
+        if patient_id:
+            from patients.models import Patient as PatientModel
+
+            p = PatientModel.objects.filter(pk=patient_id).first()
+            if p:
+                log_action(
+                    request,
+                    "creer_patient",
+                    target=p.full_name,
+                    patient_npi=p.npi,
+                )
+            from notifications.services import publish_patient_list
+
+            publish_patient_list(patient_id=patient_id, actor=request.user, kind="created")
+        return response
 
     def update(self, request, *args, **kwargs):
         if not role_can_write(request.user.role, "demographie"):
             raise PermissionDenied("Modification démographique non autorisée pour ce rôle.")
-        return super().update(request, *args, **kwargs)
+        response = super().update(request, *args, **kwargs)
+        pid = kwargs.get("pk")
+        if pid:
+            from notifications.services import publish_patient_list
+
+            publish_patient_list(patient_id=pid, actor=request.user, kind="updated")
+        return response
 
     def partial_update(self, request, *args, **kwargs):
         return self.update(request, *args, **kwargs)

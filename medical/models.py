@@ -7,13 +7,18 @@ from accounts.models import StructureSante
 
 
 class Consultation(models.Model):
-    """Timeline des consultations (table `consultations`, CDC §6.3)."""
+    """Timeline des consultations (table `consultations`, CDC §6.3).
+
+    Patient → Consultation → Médecin + Spécialité + Structure + Type + Motif + Diagnostic + Notes
+    (+ RDV lié optionnel). Formulaire unique extensible via `extra` (JSON).
+    """
 
     class Type(models.TextChoices):
         CONSULTATION = "consultation", "Consultation"
         HOSPITALISATION = "hospitalisation", "Hospitalisation"
-        CHIRURGIE = "chirurgie", "Chirurgie"
         URGENCE = "urgence", "Urgence"
+        SUIVI = "suivi", "Suivi/Contrôle"
+        CHIRURGIE = "chirurgie", "Chirurgie"
 
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="consultations")
     structure = models.ForeignKey(StructureSante, on_delete=models.SET_NULL, null=True, blank=True)
@@ -21,19 +26,31 @@ class Consultation(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="consultations",
     )
+    appointment = models.ForeignKey(
+        "patients.Appointment",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="consultations",
+    )
     date = models.DateTimeField()
     type = models.CharField(max_length=20, choices=Type.choices, default=Type.CONSULTATION)
+    specialite = models.CharField(max_length=80, blank=True)
+    motif = models.CharField(max_length=255, blank=True)
     diagnostic = models.CharField(max_length=255, blank=True)
     notes = models.TextField(blank=True)
+    extra = models.JSONField(default=dict, blank=True)
     annule = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         verbose_name = "Consultation"
         ordering = ["-date"]
 
     def __str__(self):
-        return f"{self.patient.full_name} — {self.diagnostic} ({self.date:%d/%m/%Y})"
+        spec = self.specialite or "Consultation"
+        return f"{spec} — {self.patient.full_name} ({self.date:%d/%m/%Y})"
 
 
 class Ordonnance(models.Model):
@@ -66,6 +83,7 @@ class Ordonnance(models.Model):
         related_name="ordonnances_dispensees",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         verbose_name = "Ordonnance"
@@ -76,13 +94,19 @@ class Ordonnance(models.Model):
 
 
 class Medicament(models.Model):
-    """Ligne de médicament d'une ordonnance."""
+    """Ligne de médicament d'une ordonnance (saisie détaillée)."""
 
     ordonnance = models.ForeignKey(Ordonnance, on_delete=models.CASCADE, related_name="medicaments")
     nom = models.CharField(max_length=150)
     dosage = models.CharField(max_length=80, blank=True)
-    frequence = models.CharField(max_length=120, blank=True)
+    forme = models.CharField(max_length=40, blank=True)
+    quantite = models.CharField(max_length=80, blank=True, help_text="Quantité à délivrer, ex. 1 boîte")
+    unites_par_prise = models.CharField(max_length=40, blank=True, help_text="Ex. 2 comprimés")
+    frequence_par_jour = models.CharField(max_length=40, blank=True, help_text="Ex. 3/jour")
+    frequence = models.CharField(max_length=120, blank=True, help_text="Posologie combinée (rétrocompat)")
     duree_jours = models.PositiveIntegerField(null=True, blank=True)
+    moment = models.CharField(max_length=40, blank=True)
+    instructions = models.CharField(max_length=255, blank=True)
 
     def __str__(self):
         return f"{self.nom} {self.dosage}"
@@ -118,8 +142,23 @@ class Examen(models.Model):
     resultat_texte = models.TextField(blank=True)
     commentaire_labo = models.TextField(blank=True)
     fichier = models.FileField(upload_to="examens/", null=True, blank=True)
+    bon = models.ForeignKey(
+        "BonExamen",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="resultats",
+    )
+    ligne = models.ForeignKey(
+        "BonExamenLigne",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="resultats",
+    )
     annule = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         verbose_name = "Examen"
@@ -150,3 +189,80 @@ class ConstanteVitale(models.Model):
 
     def __str__(self):
         return f"Constantes {self.patient.full_name} ({self.date:%d/%m/%Y})"
+
+
+class BonExamen(models.Model):
+    """Bon de prescription d'examens (1..n lignes) — workflow labo."""
+
+    class Statut(models.TextChoices):
+        DEMANDE = "demande", "Demandé"
+        RECU = "recu", "Reçu"
+        EN_COURS = "en_cours", "En cours"
+        RESULTAT_DISPONIBLE = "resultat_disponible", "Résultat disponible"
+        CLOTURE = "cloture", "Clôturé"
+
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="bons_examen")
+    medecin = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="bons_examen_prescrits",
+    )
+    structure = models.ForeignKey(
+        StructureSante,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="bons_examen_origine",
+        help_text="Structure du médecin prescripteur.",
+    )
+    laboratoire = models.ForeignKey(
+        StructureSante,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="bons_examen_labo",
+        help_text="Laboratoire / structure destinataire.",
+    )
+    laboratoire_nom = models.CharField(max_length=150, blank=True)
+    motif = models.CharField(max_length=255, blank=True)
+    observations = models.TextField(blank=True)
+    statut = models.CharField(max_length=24, choices=Statut.choices, default=Statut.DEMANDE, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Bon d'examen"
+        verbose_name_plural = "Bons d'examen"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Bon #{self.pk} — {self.patient.full_name} ({self.get_statut_display()})"
+
+    def refresh_statut_from_lignes(self, save=True):
+        """Passe en résultat disponible si toutes les lignes ont un résultat."""
+        lignes = list(self.lignes.all())
+        if not lignes:
+            return
+        if all(l.resultats.filter(annule=False).exists() for l in lignes):
+            if self.statut not in (self.Statut.CLOTURE,):
+                self.statut = self.Statut.RESULTAT_DISPONIBLE
+                if save:
+                    self.save(update_fields=["statut", "updated_at"])
+
+
+class BonExamenLigne(models.Model):
+    """Examen prescrit sur un bon."""
+
+    bon = models.ForeignKey(BonExamen, on_delete=models.CASCADE, related_name="lignes")
+    type_examen = models.CharField(max_length=120)
+    categorie = models.CharField(
+        max_length=12,
+        choices=Examen.Categorie.choices,
+        default=Examen.Categorie.ANALYSES,
+    )
+    code = models.CharField(max_length=40, blank=True)
+
+    def __str__(self):
+        return self.type_examen

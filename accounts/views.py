@@ -377,7 +377,7 @@ class PatientPasswordChangeView(APIView):
 
 
 class PatientPinLoginView(APIView):
-    """Déverrouillage secondaire NPI + PIN 5 chiffres (pas la connexion principale)."""
+    """Déverrouillage secondaire NPI + PIN 4 chiffres (pas la connexion principale)."""
 
     permission_classes = [AllowAny]
 
@@ -416,7 +416,7 @@ class PatientPinLoginView(APIView):
 
 
 class SetPinView(APIView):
-    """Définit / change le PIN (patient ou pro) — 5 chiffres, hashé."""
+    """Définit / change le PIN (patient ou pro) — 4 chiffres, hashé."""
 
     permission_classes = [IsAuthenticated]
 
@@ -515,15 +515,28 @@ class MeView(APIView):
         user = request.user
         data = serializer.validated_data
         update_fields = []
-        for field in ("first_name", "last_name", "telephone", "email"):
+        for field in ("first_name", "last_name", "telephone", "email", "specialite"):
             if field in data:
                 value = data[field]
                 if field == "telephone" and value:
                     value = normalize_phone(value)
                 setattr(user, field, value)
                 update_fields.append(field)
+        if "structure_principale" in data:
+            user.structure_principale = data["structure_principale"]
+            update_fields.append("structure_principale")
         if update_fields:
             user.save(update_fields=update_fields)
+        if "structure_ids" in data:
+            ids = data["structure_ids"]
+            user.structures.set(ids)
+            if user.structure_principale_id and user.structure_principale_id not in {
+                s.pk for s in ids
+            }:
+                # principal doit rester dans la liste rattachée
+                if ids:
+                    user.structure_principale = ids[0]
+                    user.save(update_fields=["structure_principale"])
 
         patient = getattr(user, "patient", None)
         if patient is not None:
@@ -614,6 +627,52 @@ class StructureSanteViewSet(viewsets.ModelViewSet):
         if self.action in ("list", "retrieve"):
             return [IsAuthenticated()]
         return [IsAdmin()]
+
+
+class HospitalCatalogView(APIView):
+    """Liste JSON des hôpitaux du Bénin (catalogue) + structures seedées."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .hospital_catalog import load_hospitals
+
+        qs = StructureSante.objects.all()
+        department = request.query_params.get("department")
+        commune = request.query_params.get("commune")
+        q = (request.query_params.get("q") or "").strip()
+        catalog = load_hospitals()
+        if department:
+            catalog = [h for h in catalog if (h.get("department") or "").lower() == department.lower()]
+            qs = qs.filter(department__iexact=department)
+        if commune:
+            catalog = [h for h in catalog if (h.get("commune") or "").lower() == commune.lower()]
+            qs = qs.filter(commune__iexact=commune)
+        if q:
+            ql = q.lower()
+            catalog = [
+                h
+                for h in catalog
+                if ql in (h.get("name") or "").lower() or ql in (h.get("full_name") or "").lower()
+            ]
+            qs = qs.filter(nom__icontains=q)
+        return Response(
+            {
+                "catalog": catalog,
+                "structures": StructureSanteSerializer(qs[:200], many=True).data,
+            }
+        )
+
+
+class ContractsView(APIView):
+    """Contrats figés (PIN/OTP/spécialités/routing notifs) — public authentifié."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.contracts import contracts_payload
+
+        return Response(contracts_payload())
 
 
 class UserViewSet(viewsets.ModelViewSet):

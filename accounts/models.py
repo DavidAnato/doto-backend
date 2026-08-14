@@ -24,6 +24,15 @@ class StructureSante(models.Model):
     )
     statut_partenaire = models.BooleanField(default=True)
     telephone = models.CharField(max_length=30, blank=True)
+    # Catalogue hôpitaux Bénin
+    catalog_id = models.PositiveIntegerField(null=True, blank=True, unique=True, db_index=True)
+    full_name = models.CharField(max_length=255, blank=True)
+    ownership = models.CharField(max_length=40, blank=True)
+    department = models.CharField(max_length=80, blank=True)
+    commune = models.CharField(max_length=80, blank=True)
+    address = models.CharField(max_length=255, blank=True)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -79,7 +88,10 @@ class User(AbstractUser):
     failed_login_attempts = models.PositiveIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
 
-    # PIN 5 chiffres — verrouillage appareil/session (obligatoire pour les pros)
+    # Spécialité principale (médecins) — préremplit la consultation, modifiable.
+    specialite = models.CharField(max_length=80, blank=True, default="Médecine générale")
+
+    # PIN 4 chiffres — verrouillage appareil/session (obligatoire pour les pros)
     pin_hash = models.CharField(max_length=128, blank=True)
     failed_pin_attempts = models.PositiveIntegerField(default=0)
     pin_locked_until = models.DateTimeField(null=True, blank=True)

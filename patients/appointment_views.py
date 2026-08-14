@@ -183,7 +183,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                     + (f" — {appt.motif}" if appt.motif else "")
                     + ". Confirmez ou refusez dans l'agenda."
                 ),
-                type=Notification.Type.SYSTEM,
+                type=Notification.Type.APPOINTMENT,
                 payload={
                     "kind": "rdv_pending",
                     "appointment_id": appt.id,
@@ -200,7 +200,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             body=f"RDV prévu le {when} — {struct}"
             + (f" ({appt.motif})" if appt.motif else "")
             + ".",
-            notif_type=Notification.Type.SYSTEM,
+            notif_type=Notification.Type.APPOINTMENT,
             event_type="appointment",
             section="rdv",
             payload={"kind": "rdv_created", "appointment_id": appt.id},
@@ -240,7 +240,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                     f"Dr {user.get_full_name() or user.username} a confirmé le RDV "
                     f"de {appt.patient.full_name}."
                 ),
-                type=Notification.Type.SYSTEM,
+                type=Notification.Type.APPOINTMENT,
                 payload={
                     "kind": "rdv_confirmed",
                     "appointment_id": appt.id,
@@ -253,13 +253,74 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             appt.patient,
             title="Rendez-vous confirmé",
             body=f"Votre RDV du {when} a été confirmé.",
-            notif_type=Notification.Type.SYSTEM,
+            notif_type=Notification.Type.APPOINTMENT,
             event_type="appointment",
             section="rdv",
             payload={"kind": "rdv_confirmed", "appointment_id": appt.id},
             actor=user,
         )
         return Response(self.get_serializer(appt).data)
+
+    @action(detail=True, methods=["post"], url_path="demarrer-consultation")
+    def demarrer_consultation(self, request, pk=None):
+        """Médecin : démarre une consultation depuis un RDV confirmé (walk-in = POST consultations sans appointment)."""
+        from django.utils import timezone
+
+        from medical.models import Consultation
+        from medical.serializers import ConsultationSerializer
+
+        appt = self.get_object()
+        user = request.user
+        if user.role not in (Roles.MEDECIN, Roles.ADMIN):
+            raise PermissionDenied("Réservé au médecin.")
+        if user.role == Roles.MEDECIN and appt.professionnel_id not in (None, user.id):
+            raise PermissionDenied("Ce RDV ne vous est pas assigné.")
+        if appt.statut not in (Appointment.Statut.CONFIRME, Appointment.Statut.PLANIFIE):
+            return Response(
+                {"detail": "Seuls les RDV confirmés (ou planifiés) peuvent démarrer une consultation."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        existing = Consultation.objects.filter(appointment=appt, annule=False).first()
+        if existing:
+            return Response(ConsultationSerializer(existing).data)
+        specialite = (request.data.get("specialite") or getattr(user, "specialite", "") or "").strip()
+        consultation = Consultation.objects.create(
+            patient=appt.patient,
+            structure=appt.structure or getattr(user, "structure_principale", None),
+            medecin=user,
+            appointment=appt,
+            date=timezone.now(),
+            type=Consultation.Type.CONSULTATION,
+            specialite=specialite,
+            motif=appt.motif or "",
+            diagnostic="",
+            notes="",
+        )
+        appt.statut = Appointment.Statut.TERMINE
+        appt.save(update_fields=["statut", "updated_at"])
+        log_action(
+            request,
+            "demarrer_consultation",
+            target=f"rdv:{appt.id}",
+            patient_npi=appt.patient.npi,
+        )
+        notify_patient_dossier_change(
+            appt.patient,
+            title="Consultation démarrée",
+            body="Votre rendez-vous a été transformé en consultation.",
+            notif_type=Notification.Type.DOSSIER_UPDATED,
+            event_type="dossier_updated",
+            section="dossier",
+            payload={
+                "kind": "consultation",
+                "consultation_id": consultation.id,
+                "appointment_id": appt.id,
+            },
+            actor=user,
+        )
+        return Response(
+            ConsultationSerializer(consultation).data, status=status.HTTP_201_CREATED
+        )
 
     def partial_update(self, request, *args, **kwargs):
         appt = self.get_object()

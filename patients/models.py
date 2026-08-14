@@ -71,7 +71,7 @@ class Patient(models.Model):
     telephone = models.CharField(max_length=30, blank=True)
     email = models.EmailField(blank=True)
 
-    # PIN 5 chiffres pour déverrouillage app (optionnel) — hashé (jamais en clair).
+    # PIN 4 chiffres pour déverrouillage app (optionnel) — hashé (jamais en clair).
     pin_hash = models.CharField(max_length=128, blank=True)
     failed_pin_attempts = models.PositiveIntegerField(default=0)
     pin_locked_until = models.DateTimeField(null=True, blank=True)

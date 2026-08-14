@@ -38,7 +38,7 @@ python manage.py seeddata
 python manage.py runserver 8000
 ```
 
-> **Pas de `.env` requis** en dév/test : SQLite, CORS ouvert, CSRF assoupli, OTP `000000`.
+> **Pas de `.env` requis** en dév/test : SQLite, CORS ouvert, CSRF assoupli, OTP `00000`.
 > Un `.env` reste optionnel pour override (voir `.env.example`).
 
 - API : http://127.0.0.1:8000/api/health/
@@ -47,7 +47,7 @@ python manage.py runserver 8000
 
 ## Comptes de démonstration
 Login pro / admin : **identifiant + mot de passe** (pas d'OTP).
-OTP mock `000000` : inscription patient ou changement de mot de passe uniquement.
+OTP mock `00000` : inscription patient ou changement de mot de passe uniquement.
 Liste complète affichée par `seeddata` / `seed_demo`.
 
 | Rôle | Identifiants |
@@ -59,7 +59,7 @@ Liste complète affichée par `seeddata` / `seed_demo`.
 | Laborantins | `laborantin`, `laborantin2` / `Labo123!` |
 | Ambulanciers | `ambulancier`, `ambulancier2`, `ambulancier3` / `Ambulancier123!` |
 | Réceptionnistes | `reception`, `reception2` / `Reception123!` |
-| Patients (DotoPlus) | `+229 97 45 12 88` (+ 3 autres) / `demo123` — NPI pour Hub/ANIP, PIN optionnel `123456` |
+| Patients (DotoPlus) | `+229 97 45 12 88` (+ 3 autres) / `demo123` — NPI pour Hub/ANIP, PIN optionnel `1234` |
 
 Matrice d'accès : voir `core/permissions.py` et le README racine.
 
@@ -67,7 +67,7 @@ Matrice d'accès : voir `core/permissions.py` et le README racine.
 | Variable | Défaut | Rôle |
 |----------|--------|------|
 | `SMS_PROVIDER` | `mock` | `mock` (code `DEMO_OTP_CODE`) ou `twilio` |
-| `DEMO_OTP_CODE` | `000000` | Code accepté en mock |
+| `DEMO_OTP_CODE` | `00000` | Code accepté en mock |
 | `TWILIO_*` | — | Stub Twilio (optionnel) |
 | `ANIP_PROVIDER` | `mock` | `mock` ou `http` |
 | `ANIP_BASE_URL` / `ANIP_API_KEY` | — | Stub HTTP ANIP |
@@ -77,4 +77,4 @@ Auth : `POST /api/auth/login/` (pro, sans OTP), `POST /api/auth/patient/login/` 
 `POST /api/auth/patient/register/`, `POST /api/auth/patient/password-change/`,
 `POST /api/auth/patient/pin/` (déverrouillage secondaire), `POST /api/auth/patient/set-pin/`.
 
-Patient démo PIN optionnel : `123456`.
+Patient démo PIN optionnel : `1234`.

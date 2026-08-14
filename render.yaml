@@ -41,7 +41,7 @@ services:
       - key: SMS_PROVIDER
         value: mock
       - key: DEMO_OTP_CODE
-        value: "000000"
+        value: "00000"
       - key: ACCESS_TOKEN_MINUTES
         value: "60"
       - key: REFRESH_TOKEN_DAYS

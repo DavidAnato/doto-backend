@@ -148,3 +148,36 @@ def notify_patient_dossier_change(
             },
         )
     return notif
+
+
+def publish_professionals(event: dict[str, Any], *, structure_id=None) -> int:
+    """Diffuse un event SSE à tous les professionnels (optionnellement d'une structure)."""
+    from django.db.models import Q
+
+    from core.permissions import Roles
+
+    qs = User.objects.filter(role__in=Roles.PROFESSIONALS, actif=True)
+    if structure_id:
+        qs = qs.filter(
+            Q(structure_principale_id=structure_id) | Q(structures__id=structure_id)
+        ).distinct()
+    count = 0
+    for uid in qs.values_list("id", flat=True):
+        hub_bus.publish(uid, event)
+        count += 1
+    return count
+
+
+def publish_patient_list(*, patient_id, actor=None, kind="updated"):
+    event = {
+        "type": "patient_list",
+        "patient_id": patient_id,
+        "kind": kind,
+        "ts": timezone.now().isoformat(),
+    }
+    structure_id = getattr(actor, "structure_principale_id", None) if actor else None
+    publish_professionals(event, structure_id=structure_id)
+    actor_id = getattr(actor, "id", None)
+    if actor_id:
+        hub_bus.publish(actor_id, event)
+    return event

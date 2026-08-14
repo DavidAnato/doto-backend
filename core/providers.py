@@ -73,7 +73,7 @@ def get_sms_provider() -> SmsProvider:
     return MockSmsProvider()
 
 
-def generate_otp(digits: int = 6) -> str:
+def generate_otp(digits: int = 5) -> str:
     return "".join(random.choices(string.digits, k=digits))
 
 

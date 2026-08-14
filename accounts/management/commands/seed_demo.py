@@ -31,8 +31,8 @@ def ensure_placeholder_photo(user, initials="ID", size=320, color=(30, 55, 85)):
 CREDENTIALS_NOTE = """
 === Comptes de test DOTO+ ===
 Mot de passe (tous les pros / admin) : mdp123
-OTP (000000 en mock) : login / inscription patient
-PIN session pro : 12345
+OTP (00000 en mock) : login / inscription patient
+PIN session pro : 1234
 
 Admin
   admin / mdp123
@@ -64,13 +64,13 @@ Réceptionnistes
   reception  / mdp123
   reception2 / mdp123
 
-Patients (DotoPlus) — téléphone + OTP (mock 000000)
+Patients (DotoPlus) — téléphone + OTP (mock 00000)
   +229 97 45 12 88 · NPI 1200478821 (identification Hub, pas login)
   +229 97 11 22 33 · NPI 1200112233
   +229 96 55 44 33 · NPI 1200998877
   +229 95 33 22 11 · NPI 1200334455
-  PIN déverrouillage (optionnel patient) : 12345
-  PIN pro (obligatoire session) : 12345
+  PIN déverrouillage (optionnel patient) : 1234
+  PIN pro (obligatoire session) : 1234
 """.strip()
 
 
@@ -79,6 +79,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         self.stdout.write("Initialisation des données de démonstration DOTO+…")
+
+        from accounts.hospital_catalog import seed_structures
+
+        created_h, updated_h = seed_structures(stdout=None)
+        self.stdout.write(f"Catalogue hôpitaux Bénin : {created_h} créés, {updated_h} mis à jour.")
 
         cnhu, _ = StructureSante.objects.get_or_create(
             code_structure="STRUCT-CNHU",
@@ -165,8 +170,11 @@ class Command(BaseCommand):
                 user.is_staff = True
                 user.is_superuser = True
             user.save()
-            if not user.has_pin:
-                user.set_pin("12345")
+            if not user.has_pin or not user.check_pin("1234"):
+                user.set_pin("1234")
+            if role == User.Role.MEDECIN and not user.specialite:
+                user.specialite = "Médecine générale"
+                user.save(update_fields=["specialite"])
             user.structures.add(structure, cnhu)
             created_users[username] = user
             ensure_placeholder_photo(user, initials=f"{prenom[:1]}{nom[:1]}".upper() or "P")
@@ -287,13 +295,9 @@ class Command(BaseCommand):
             patient.groupe_sanguin = pdata["gs"]
             patient.electrophorese = pdata.get("electro", "Non identifié")
             patient.save()
-            # PIN démo 5 chiffres (optionnel — on le pose pour faciliter les tests)
-            if not patient.has_pin:
-                patient.set_pin("12345")
-            else:
-                # Migrer l'ancien PIN 6 chiffres seed
-                if not patient.check_pin("12345"):
-                    patient.set_pin("12345")
+            # PIN démo 4 chiffres
+            if not patient.has_pin or not patient.check_pin("1234"):
+                patient.set_pin("1234")
 
             ensure_placeholder_photo(
                 patient_user,

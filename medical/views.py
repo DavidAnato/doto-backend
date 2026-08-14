@@ -5,6 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from audit.utils import log_action
 from core.permissions import ReadOnlyOrRole, Roles, SECTION_READ_ROLES
@@ -12,8 +13,9 @@ from notifications.models import Notification
 from notifications.services import notify_patient_dossier_change
 from patients.access import grant_allows_full, has_active_grant
 
-from .models import Consultation, ConstanteVitale, Examen, Ordonnance
+from .models import BonExamen, Consultation, ConstanteVitale, Examen, Ordonnance
 from .serializers import (
+    BonExamenSerializer,
     ConstanteVitaleSerializer,
     ConsultationSerializer,
     ExamenSerializer,
@@ -101,7 +103,35 @@ class ConsultationViewSet(PatientScopedMixin, viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        consultation = serializer.save(medecin=self.request.user)
+        from django.utils import timezone
+        from rest_framework.exceptions import ValidationError
+
+        from patients.models import Appointment
+
+        user = self.request.user
+        data = serializer.validated_data
+        attached = set(user.structures.values_list("id", flat=True))
+        if user.structure_principale_id:
+            attached.add(user.structure_principale_id)
+        structure = data.get("structure")
+        if structure is None:
+            structure = getattr(user, "structure_principale", None)
+        elif user.role != Roles.ADMIN and structure.id not in attached:
+            raise PermissionDenied("Choisissez une de vos structures rattachées.")
+        if structure is None:
+            raise ValidationError({"structure": "La structure de santé est obligatoire."})
+        specialite = (data.get("specialite") or "").strip() or getattr(user, "specialite", "") or ""
+        date = data.get("date") or timezone.now()
+        consultation = serializer.save(
+            medecin=user, structure=structure, specialite=specialite, date=date
+        )
+        appt = consultation.appointment
+        if appt and appt.statut not in (
+            Appointment.Statut.ANNULE,
+            Appointment.Statut.ABSENT,
+        ):
+            appt.statut = Appointment.Statut.TERMINE
+            appt.save(update_fields=["statut", "updated_at"])
         med = self.request.user.get_full_name() or self.request.user.username
         notify_patient_dossier_change(
             consultation.patient,
@@ -360,7 +390,15 @@ class ExamenViewSet(PatientScopedMixin, viewsets.ModelViewSet):
         return ctx
 
     def perform_create(self, serializer):
-        examen = serializer.save(laborantin=self.request.user)
+        extras = {}
+        if self.request.user.role in (Roles.LABORANTIN, Roles.ADMIN):
+            extras["laborantin"] = self.request.user
+        examen = serializer.save(**extras)
+        if examen.bon_id:
+            if examen.bon.statut in (examen.bon.Statut.DEMANDE, examen.bon.Statut.RECU):
+                examen.bon.statut = examen.bon.Statut.EN_COURS
+                examen.bon.save(update_fields=["statut", "updated_at"])
+            examen.bon.refresh_statut_from_lignes()
         log_action(self.request, "upload_examen", target=examen.type_examen,
                    patient_npi=examen.patient.npi)
         notify_patient_dossier_change(
@@ -370,7 +408,11 @@ class ExamenViewSet(PatientScopedMixin, viewsets.ModelViewSet):
             notif_type=Notification.Type.EXAMEN,
             event_type="examen",
             section="examens",
-            payload={"kind": "examen", "examen_id": examen.id},
+            payload={
+                "kind": "examen",
+                "examen_id": examen.id,
+                "bon_id": examen.bon_id,
+            },
             actor=self.request.user,
         )
 
@@ -453,3 +495,215 @@ class ConstanteVitaleViewSet(PatientScopedMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(infirmier=self.request.user)
+
+
+class BonExamenViewSet(PatientScopedMixin, viewsets.ModelViewSet):
+    """Bons d'examen : prescription médecin, réalisation laborantin."""
+
+    queryset = (
+        BonExamen.objects.select_related("patient", "medecin", "structure", "laboratoire")
+        .prefetch_related("lignes", "resultats")
+        .all()
+    )
+    serializer_class = BonExamenSerializer
+    permission_classes = [RoleOrPatientRead]
+    write_roles = (Roles.MEDECIN, Roles.ADMIN)
+    filterset_fields = ["patient", "statut", "laboratoire"]
+
+    def get_permissions(self):
+        if self.action in ("recevoir", "demarrer", "cloturer", "deposer_resultat"):
+            return [IsAuthenticated()]
+        return super().get_permissions()
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+        if getattr(user, "role", None) != Roles.PATIENT:
+            _assert_section_read(user, "examens")
+        pending = self.request.query_params.get("en_attente")
+        if pending in ("1", "true", "True"):
+            qs = qs.filter(
+                statut__in=[
+                    BonExamen.Statut.DEMANDE,
+                    BonExamen.Statut.RECU,
+                    BonExamen.Statut.EN_COURS,
+                ]
+            )
+        return qs
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["request"] = self.request
+        return ctx
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        structure = getattr(user, "structure_principale", None)
+        bon = serializer.save(medecin=user, structure=structure)
+        log_action(
+            self.request,
+            "prescrire_examen",
+            target=f"bon:{bon.id}",
+            patient_npi=bon.patient.npi,
+        )
+        med = user.get_full_name() or user.username
+        notify_patient_dossier_change(
+            bon.patient,
+            title="Prescription d'examen",
+            body=f"{med} a prescrit un bon d'examen.",
+            notif_type=Notification.Type.BON_EXAMEN,
+            event_type="examen",
+            section="examens",
+            payload={"kind": "bon_examen", "bon_id": bon.id},
+            actor=user,
+        )
+        # File labo : notifier les laborantins de la structure destinataire
+        if bon.laboratoire_id:
+            from django.contrib.auth import get_user_model
+
+            User = get_user_model()
+            for lab in User.objects.filter(
+                role=Roles.LABORANTIN, actif=True, structures=bon.laboratoire
+            ):
+                from notifications.services import notify_user
+
+                notify_user(
+                    lab,
+                    title="Nouveau bon d'examen",
+                    body=f"{bon.patient.full_name} — {bon.lignes.count()} examen(s).",
+                    type=Notification.Type.BON_EXAMEN,
+                    payload={
+                        "kind": "bon_examen",
+                        "bon_id": bon.id,
+                        "patient_id": bon.patient_id,
+                        "section": "examens",
+                    },
+                )
+
+    def _require_labo(self, request):
+        if request.user.role not in (Roles.LABORANTIN, Roles.ADMIN):
+            return Response(
+                {"detail": "Réservé au laborantin."}, status=status.HTTP_403_FORBIDDEN
+            )
+        return None
+
+    @action(detail=True, methods=["post"])
+    def recevoir(self, request, pk=None):
+        denied = self._require_labo(request)
+        if denied:
+            return denied
+        bon = self.get_object()
+        if bon.statut != BonExamen.Statut.DEMANDE:
+            return Response(
+                {"detail": "Ce bon n'est pas en statut Demandé."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        bon.statut = BonExamen.Statut.RECU
+        bon.save(update_fields=["statut", "updated_at"])
+        return Response(BonExamenSerializer(bon, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"])
+    def demarrer(self, request, pk=None):
+        denied = self._require_labo(request)
+        if denied:
+            return denied
+        bon = self.get_object()
+        if bon.statut not in (BonExamen.Statut.DEMANDE, BonExamen.Statut.RECU):
+            return Response(
+                {"detail": "Impossible de démarrer ce bon."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        bon.statut = BonExamen.Statut.EN_COURS
+        bon.save(update_fields=["statut", "updated_at"])
+        return Response(BonExamenSerializer(bon, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"])
+    def cloturer(self, request, pk=None):
+        denied = self._require_labo(request)
+        if denied:
+            return denied
+        bon = self.get_object()
+        bon.statut = BonExamen.Statut.CLOTURE
+        bon.save(update_fields=["statut", "updated_at"])
+        return Response(BonExamenSerializer(bon, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], url_path="deposer-resultat")
+    def deposer_resultat(self, request, pk=None):
+        """Laborantin : dépose un résultat rattaché au bon ET au dossier patient."""
+        denied = self._require_labo(request)
+        if denied:
+            return denied
+        bon = self.get_object()
+        from django.utils import timezone
+
+        ligne_id = request.data.get("ligne") or request.data.get("ligne_id")
+        ligne = None
+        if ligne_id:
+            ligne = bon.lignes.filter(pk=ligne_id).first()
+        type_examen = (
+            request.data.get("type_examen")
+            or (ligne.type_examen if ligne else "")
+            or "Examen"
+        )
+        categorie = request.data.get("categorie") or (
+            ligne.categorie if ligne else Examen.Categorie.ANALYSES
+        )
+        examen = Examen(
+            patient=bon.patient,
+            categorie=categorie,
+            type_examen=type_examen,
+            laboratoire=bon.laboratoire_nom
+            or (bon.laboratoire.nom if bon.laboratoire else ""),
+            laborantin=request.user,
+            medecin_prescripteur=bon.medecin,
+            date=timezone.now().date(),
+            statut=request.data.get("statut") or Examen.Statut.NORMAL,
+            resultat_texte=request.data.get("resultat_texte") or "",
+            commentaire_labo=request.data.get("commentaire_labo") or "",
+            bon=bon,
+            ligne=ligne,
+        )
+        f = request.FILES.get("fichier")
+        if f:
+            examen.fichier = f
+        examen.save()
+        if bon.statut in (BonExamen.Statut.DEMANDE, BonExamen.Statut.RECU):
+            bon.statut = BonExamen.Statut.EN_COURS
+            bon.save(update_fields=["statut", "updated_at"])
+        bon.refresh_statut_from_lignes()
+        log_action(
+            request,
+            "deposer_resultat_examen",
+            target=type_examen,
+            patient_npi=bon.patient.npi,
+        )
+        notify_patient_dossier_change(
+            bon.patient,
+            title="Résultat d'examen",
+            body=f"Résultat disponible : {type_examen}.",
+            notif_type=Notification.Type.EXAMEN,
+            event_type="examen",
+            section="examens",
+            payload={
+                "kind": "bon_resultat",
+                "examen_id": examen.id,
+                "bon_id": bon.id,
+            },
+            actor=request.user,
+        )
+        return Response(
+            {
+                "examen": ExamenSerializer(examen, context={"request": request}).data,
+                "bon": BonExamenSerializer(bon, context={"request": request}).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ExamCatalogView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .catalog import load_exam_catalog
+
+        return Response(load_exam_catalog())

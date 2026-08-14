@@ -64,7 +64,7 @@ reg = show(
         data=json.dumps(
             {
                 "phone": demo_phone,
-                "otp": "000000",
+                "otp": "00000",
                 "first_name": "Test",
                 "last_name": "Inscription",
             }
@@ -87,7 +87,7 @@ show(
     "patient login otp new",
     c.post(
         "/api/auth/patient/login/",
-        data=json.dumps({"phone": demo_phone, "otp": "000000"}),
+        data=json.dumps({"phone": demo_phone, "otp": "00000"}),
         content_type="application/json",
     ),
 )
@@ -108,7 +108,7 @@ rp = show(
     "patient login otp",
     c.post(
         "/api/auth/patient/login/",
-        data=json.dumps({"phone": "+229 97 45 12 88", "otp": "000000"}),
+        data=json.dumps({"phone": "+229 97 45 12 88", "otp": "00000"}),
         content_type="application/json",
     ),
 )
@@ -148,12 +148,12 @@ assert c.get("/api/hub/events/").status_code == 401
 assert c.get("/api/hub/events/?access=invalid").status_code == 401
 print("hub SSE auth gates: OK")
 
-# Suite patient — PIN 5 chiffres (déverrouillage secondaire + verify)
+# Suite patient — PIN 4 chiffres (déverrouillage secondaire + verify)
 show(
     "pin unlock (secondary)",
     c.post(
         "/api/auth/patient/pin/",
-        data=json.dumps({"npi": "1200478821", "pin": "12345"}),
+        data=json.dumps({"npi": "1200478821", "pin": "1234"}),
         content_type="application/json",
     ),
 )
@@ -161,7 +161,7 @@ show(
     "verify pin authenticated",
     c.post(
         "/api/auth/verify-pin/",
-        data=json.dumps({"pin": "12345"}),
+        data=json.dumps({"pin": "1234"}),
         content_type="application/json",
         **pH,
     ),
@@ -171,7 +171,7 @@ show(
     "pro verify pin",
     c.post(
         "/api/auth/verify-pin/",
-        data=json.dumps({"pin": "12345"}),
+        data=json.dumps({"pin": "1234"}),
         content_type="application/json",
         **H,
     ),
