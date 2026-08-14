@@ -48,8 +48,9 @@ Copie **toutes** ces lignes (une seule Build Command) :
 pip install --upgrade pip && pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate --noinput
 ```
 
-> `runtime.txt` force **Python 3.11** (évite l’échec `rapidocr` / wheels 3.13).  
-> L’OCR pièce d’identité n’est **pas** dans `requirements.txt` (trop lourd pour Render) — voir `requirements-ocr.txt` en local.
+> `runtime.txt` force **Python 3.11** (requis pour RapidOCR / numpy).  
+> L’OCR CIP utilise `rapidocr-onnxruntime` (inclus dans `requirements.txt`).  
+> PaddleOCR reste optionnel : `pip install -r requirements-ocr.txt` en local seulement.
 
 ---
 

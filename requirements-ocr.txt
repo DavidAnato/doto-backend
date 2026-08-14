@@ -1,12 +1,5 @@
-# OCR pièce d'identité (optionnel — local / worker dédié).
-# Incompatible avec Python 3.13+ ; utiliser Python 3.11 ou 3.12.
+# OCR avancé (local) — PaddleOCR en plus de RapidOCR déjà dans requirements.txt.
+# Python 3.11 ou 3.12 recommandé.
 #   pip install -r requirements-ocr.txt
-#
-# En prod Render, ces packages ne sont PAS installés (build trop lourd / wheels).
-# L'API reste up ; l'endpoint OCR renvoie une erreur claire si non installé.
-rapidocr-onnxruntime>=1.3.0,<1.5
-numpy>=1.26,<2.1
-opencv-python-headless>=4.8,<4.11
-# PaddleOCR (fallback) — très lourd, optionnel :
-# paddlepaddle>=2.6.0
-# paddleocr>=2.7.0
+paddlepaddle>=2.6.0
+paddleocr>=2.7.0

@@ -30,7 +30,8 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-# OCR local optionnel (Python 3.11/3.12) : pip install -r requirements-ocr.txt
+# OCR Paddle optionnel (Python 3.11/3.12) : pip install -r requirements-ocr.txt
+# RapidOCR + numpy sont déjà dans requirements.txt
 python manage.py migrate
 python manage.py seeddata
 # (alias) python manage.py seed_demo
