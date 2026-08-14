@@ -1,3 +1,1 @@
-# Runtime Python Render — 3.11 (OCR optionnel + wheels stables)
-# Sans ça, Render peut prendre 3.13 et casser rapidocr/paddle.
 python-3.11.11

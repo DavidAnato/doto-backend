@@ -17,6 +17,9 @@ services:
     startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --keep-alive 65
     healthCheckPath: /api/health/
     envVars:
+      # Obligatoire : RapidOCR n'existe pas pour Python 3.14 (défaut Render 2026)
+      - key: PYTHON_VERSION
+        value: "3.11.11"
       - key: DJANGO_DEBUG
         value: "False"
       - key: DJANGO_BEHIND_PROXY

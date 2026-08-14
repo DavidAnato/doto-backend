@@ -26,6 +26,7 @@ Guide complet : build → migrate → collectstatic → seeddata → serveur.
 
 | Variable | Valeur | Obligatoire ? |
 |----------|--------|---------------|
+| `PYTHON_VERSION` | `3.11.11` | **Oui** (sinon Render installe 3.14 et RapidOCR échoue) |
 | `DATABASE_URL` | Internal DB URL Render | Oui (prod Postgres) |
 | `DJANGO_SECRET_KEY` | chaîne aléatoire | Recommandé |
 | `DJANGO_DEBUG` | `False` en prod stricte (défaut code = `True`) | Optionnel |
@@ -48,8 +49,9 @@ Copie **toutes** ces lignes (une seule Build Command) :
 pip install --upgrade pip && pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate --noinput
 ```
 
-> `runtime.txt` force **Python 3.11** (requis pour RapidOCR / numpy).  
-> L’OCR CIP utilise `rapidocr-onnxruntime` (inclus dans `requirements.txt`).  
+> RapidOCR n’existe pas pour Python 3.14 (défaut Render depuis 2026).  
+> Forcer **3.11.11** : fichier `.python-version` **et** variable d’env `PYTHON_VERSION=3.11.11`  
+> (Dashboard → Environment — le Blueprint seul ne met pas à jour un service déjà créé).  
 > PaddleOCR reste optionnel : `pip install -r requirements-ocr.txt` en local seulement.
 
 ---
