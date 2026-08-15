@@ -13,12 +13,18 @@ from rest_framework.response import Response
 from audit.utils import log_action
 from core.permissions import Roles, role_can, role_can_write
 from notifications.models import Notification
-from notifications.services import notify_patient_dossier_change, notify_user
+from notifications.services import notify_patient_dossier_change, notify_user, publish_appointment
 
 from .models import Appointment
 from .serializers import AppointmentSerializer
 
 User = get_user_model()
+
+
+def _reload_appt(pk):
+    return Appointment.objects.select_related(
+        "patient", "structure", "professionnel", "created_by"
+    ).get(pk=pk)
 
 
 class AppointmentViewSet(viewsets.ModelViewSet):
@@ -161,6 +167,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         appt = serializer.save(created_by=user)
+        appt = _reload_appt(appt.pk)
         log_action(
             request,
             "creer_rdv",
@@ -194,17 +201,14 @@ class AppointmentViewSet(viewsets.ModelViewSet):
 
         when = appt.debut.strftime("%d/%m/%Y %H:%M")
         struct = getattr(appt.structure, "nom", None) or "votre structure"
-        notify_patient_dossier_change(
-            appt.patient,
+        publish_appointment(
+            appt,
+            actor=user,
+            kind="rdv_created",
             title="Nouveau rendez-vous",
             body=f"RDV prévu le {when} — {struct}"
             + (f" ({appt.motif})" if appt.motif else "")
             + ".",
-            notif_type=Notification.Type.APPOINTMENT,
-            event_type="appointment",
-            section="rdv",
-            payload={"kind": "rdv_created", "appointment_id": appt.id},
-            actor=user,
         )
 
         return Response(self.get_serializer(appt).data, status=status.HTTP_201_CREATED)
@@ -249,15 +253,13 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 },
             )
         when = appt.debut.strftime("%d/%m/%Y %H:%M")
-        notify_patient_dossier_change(
-            appt.patient,
+        appt = _reload_appt(appt.pk)
+        publish_appointment(
+            appt,
+            actor=user,
+            kind="rdv_confirmed",
             title="Rendez-vous confirmé",
             body=f"Votre RDV du {when} a été confirmé.",
-            notif_type=Notification.Type.APPOINTMENT,
-            event_type="appointment",
-            section="rdv",
-            payload={"kind": "rdv_confirmed", "appointment_id": appt.id},
-            actor=user,
         )
         return Response(self.get_serializer(appt).data)
 
@@ -304,6 +306,12 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             target=f"rdv:{appt.id}",
             patient_npi=appt.patient.npi,
         )
+        publish_appointment(
+            _reload_appt(appt.pk),
+            actor=user,
+            kind="rdv_termine",
+            notify_patient=False,
+        )
         notify_patient_dossier_change(
             appt.patient,
             title="Consultation démarrée",
@@ -334,6 +342,13 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             log_action(
                 request, "annuler_rdv", target=f"rdv:{appt.id}", patient_npi=appt.patient.npi
             )
+            appt = _reload_appt(appt.pk)
+            publish_appointment(
+                appt,
+                actor=user,
+                kind="rdv_annule",
+                notify_patient=False,
+            )
             return Response(self.get_serializer(appt).data)
         if not role_can_write(user.role, "rdv"):
             raise PermissionDenied("Modification RDV non autorisée.")
@@ -352,6 +367,14 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 target=f"rdv:{appt.id}",
                 patient_npi=appt.patient.npi,
             )
+        appt = _reload_appt(appt.pk)
+        kind = "rdv_annule" if appt.statut == Appointment.Statut.ANNULE else "rdv_updated"
+        when = appt.debut.strftime("%d/%m/%Y %H:%M") if appt.debut else ""
+        if kind == "rdv_annule":
+            title, body = "Rendez-vous annulé", f"Votre RDV du {when} a été annulé."
+        else:
+            title, body = "Rendez-vous modifié", f"Votre RDV a été mis à jour ({when})."
+        publish_appointment(appt, actor=user, kind=kind, title=title, body=body)
         return response
 
     def destroy(self, request, *args, **kwargs):
@@ -359,4 +382,13 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("Annulez le RDV plutôt que de le supprimer.")
         if not role_can_write(request.user.role, "rdv"):
             raise PermissionDenied("Suppression RDV non autorisée.")
+        appt = _reload_appt(self.get_object().pk)
+        when = appt.debut.strftime("%d/%m/%Y %H:%M") if appt.debut else ""
+        publish_appointment(
+            appt,
+            actor=request.user,
+            kind="rdv_annule",
+            title="Rendez-vous annulé",
+            body=f"Votre RDV du {when} a été annulé.",
+        )
         return super().destroy(request, *args, **kwargs)

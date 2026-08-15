@@ -34,7 +34,14 @@ urlpatterns = [
     ),
     path(
         "patients/me/assurance/",
-        MonDossierView.as_view({"get": "mon_assurance", "put": "mon_assurance", "patch": "mon_assurance"}),
+        MonDossierView.as_view(
+            {
+                "get": "mon_assurance",
+                "put": "mon_assurance",
+                "patch": "mon_assurance",
+                "delete": "mon_assurance",
+            }
+        ),
         name="mon-assurance",
     ),
     path("access-requests/", AccessRequestListView.as_view(), name="access-request-list"),

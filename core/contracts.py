@@ -122,6 +122,33 @@ NOTIFICATION_ROUTES = {
     "system": {"screen": "notifications", "ids": []},
 }
 
+# Types d'événements SSE (même bus `hub_bus`, canal = user_id).
+# Pas de WebSocket : EventSource `?access=<jwt>` sur /api/hub/events/ (pro)
+# et /api/patient/events/ ou /api/events/ (patient / admin).
+SSE_EVENT_TYPES = {
+    "connected": "Hello à l'ouverture du flux",
+    "ping": "Keepalive (~15 s)",
+    "notification": "Notification in-app (title/body/payload)",
+    "patient_list": "Patient créé/modifié — rafraîchir listes / dashboard",
+    "appointment": (
+        "RDV créé/modifié/annulé/confirmé — payload : patient_id, appointment_id, "
+        "debut, fin, statut, professionnel_id, professionnel_nom, structure_id, kind"
+    ),
+    "insurance_updated": (
+        "Assurance ajoutée/modifiée/retirée — payload : patient_id, has_insurance, "
+        "assureur, num_police, droits_valides, kind (created|updated|removed)"
+    ),
+    "dossier_updated": "Dossier clinique (consultation, constantes…)",
+    "ordonnance": "Ordonnance créée / dispensée",
+    "examen": "Examen / bon d'examen",
+    "access_request": "Demande d'accès dossier",
+    "access_granted": "Consentement accordé",
+    "access_denied": "Consentement refusé",
+    "access_expired": "Demande expirée",
+    "access_revoked": "Accès révoqué",
+    "dodocard_scan": "Scan DotoCard (même compte pro)",
+}
+
 # kind → même routing (payload.kind prioritaire si présent)
 NOTIFICATION_KIND_ROUTES = {
     "consultation": "dossier_updated",
@@ -133,7 +160,10 @@ NOTIFICATION_KIND_ROUTES = {
     "rdv_created": "appointment",
     "rdv_pending": "appointment",
     "rdv_confirmed": "appointment",
+    "rdv_updated": "appointment",
     "rdv_annule": "appointment",
+    "insurance_updated": "dossier_updated",
+    "insurance_removed": "dossier_updated",
     "bon_examen": "bon_examen",
     "bon_resultat": "examen",
     "access_request": "access_request",
@@ -151,6 +181,7 @@ def contracts_payload():
         "medicament_moments": [{"value": v, "label": l} for v, l in MEDICAMENT_MOMENTS],
         "bon_examen_statuts": [{"value": v, "label": l} for v, l in BON_EXAMEN_STATUTS],
         "notification_routes": NOTIFICATION_ROUTES,
+        "sse_event_types": list(SSE_EVENT_TYPES.keys()),
         "conflict": "last_write_wins",
         "hospital_required_roles": list(HOSPITAL_REQUIRED_ROLES),
         "offline": {

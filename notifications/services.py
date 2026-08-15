@@ -94,7 +94,7 @@ def notify_patient_dossier_change(
     """Notifie le patient (in-app + SSE + push) et diffuse un event typé aux sessions pro.
 
     event_type SSE (canal patient + acteur) :
-      dossier_updated | ordonnance | examen | appointment
+      dossier_updated | ordonnance | examen | appointment | insurance_updated
     section payload (badges Mon dossier) :
       dossier | ordonnances | examens | assurance | rdv
     """
@@ -168,6 +168,21 @@ def publish_professionals(event: dict[str, Any], *, structure_id=None) -> int:
     return count
 
 
+def _publish_user_ids(event: dict[str, Any], user_ids) -> None:
+    seen: set[int] = set()
+    for uid in user_ids:
+        if not uid or uid in seen:
+            continue
+        seen.add(int(uid))
+        hub_bus.publish(int(uid), event)
+
+
+def _admin_user_ids():
+    from core.permissions import Roles
+
+    return list(User.objects.filter(role=Roles.ADMIN, actif=True).values_list("id", flat=True))
+
+
 def publish_patient_list(*, patient_id, actor=None, kind="updated"):
     event = {
         "type": "patient_list",
@@ -177,7 +192,146 @@ def publish_patient_list(*, patient_id, actor=None, kind="updated"):
     }
     structure_id = getattr(actor, "structure_principale_id", None) if actor else None
     publish_professionals(event, structure_id=structure_id)
-    actor_id = getattr(actor, "id", None)
-    if actor_id:
-        hub_bus.publish(actor_id, event)
+    extra = [getattr(actor, "id", None), *_admin_user_ids()]
+    _publish_user_ids(event, extra)
+    return event
+
+
+def appointment_sse_payload(appt, *, kind: str) -> dict[str, Any]:
+    pro = getattr(appt, "professionnel", None)
+    pro_nom = ""
+    if pro is not None:
+        pro_nom = pro.get_full_name() or getattr(pro, "username", "") or ""
+    debut = getattr(appt, "debut", None)
+    fin = getattr(appt, "fin", None)
+    return {
+        "patient_id": appt.patient_id,
+        "appointment_id": appt.id,
+        "debut": debut.isoformat() if debut else None,
+        "fin": fin.isoformat() if fin else None,
+        "statut": appt.statut,
+        "professionnel_id": appt.professionnel_id,
+        "professionnel_nom": pro_nom,
+        "structure_id": appt.structure_id,
+        "kind": kind,
+        "section": "rdv",
+    }
+
+
+def publish_appointment(
+    appt,
+    *,
+    actor=None,
+    kind="updated",
+    title: str = "",
+    body: str = "",
+    notify_patient: bool = True,
+):
+    """SSE RDV (patient + pros structure + médecin assigné + admins) + notif patient optionnelle."""
+    data = appointment_sse_payload(appt, kind=kind)
+    event = {
+        "type": "appointment",
+        **data,
+        "payload": data,
+        "ts": timezone.now().isoformat(),
+    }
+    structure_id = appt.structure_id or (
+        getattr(actor, "structure_principale_id", None) if actor else None
+    )
+    publish_professionals(event, structure_id=structure_id)
+    extra = [
+        getattr(actor, "id", None),
+        appt.professionnel_id,
+        appt.created_by_id,
+        *_admin_user_ids(),
+    ]
+    _publish_user_ids(event, extra)
+
+    patient = appt.patient
+    if notify_patient and title:
+        notify_patient_dossier_change(
+            patient,
+            title=title,
+            body=body,
+            notif_type=Notification.Type.APPOINTMENT,
+            event_type="appointment",
+            section="rdv",
+            payload=data,
+            actor=actor,
+        )
+    else:
+        user = getattr(patient, "user", None)
+        if user is not None:
+            hub_bus.publish(user.id, event)
+    return event
+
+
+def insurance_sse_payload(patient, *, kind: str, assurance=None) -> dict[str, Any]:
+    inst = assurance if kind != "removed" else None
+    if inst is None and kind != "removed":
+        inst = getattr(patient, "assurance", None)
+    has = bool(
+        inst
+        and getattr(inst, "assureur", None)
+        and getattr(inst, "droits_valides", True)
+    )
+    return {
+        "patient_id": getattr(patient, "pk", None) or getattr(patient, "id", None),
+        "kind": kind,
+        "section": "assurance",
+        "has_insurance": has,
+        "assureur": (getattr(inst, "assureur", None) or "") if inst else "",
+        "num_police": (getattr(inst, "num_police", None) or "") if inst else "",
+        "droits_valides": bool(getattr(inst, "droits_valides", False)) if inst else False,
+        "assurance_id": getattr(inst, "id", None) if inst else None,
+    }
+
+
+def publish_insurance_updated(
+    patient,
+    *,
+    actor=None,
+    kind="updated",
+    assurance=None,
+    notify_patient: bool = True,
+):
+    """SSE assurance (ajout / MAJ / retrait) — patient + pros + admins."""
+    data = insurance_sse_payload(patient, kind=kind, assurance=assurance)
+    event = {
+        "type": "insurance_updated",
+        **data,
+        "payload": data,
+        "ts": timezone.now().isoformat(),
+    }
+    structure_id = getattr(actor, "structure_principale_id", None) if actor else None
+    publish_professionals(event, structure_id=structure_id)
+    extra = [getattr(actor, "id", None), *_admin_user_ids()]
+    _publish_user_ids(event, extra)
+
+    titles = {
+        "created": "Assurance enregistrée",
+        "updated": "Assurance mise à jour",
+        "removed": "Assurance retirée",
+    }
+    bodies = {
+        "created": "Votre couverture assurantielle a été enregistrée.",
+        "updated": "Votre couverture assurantielle a été mise à jour.",
+        "removed": "Votre couverture assurantielle a été retirée. La carte affiche Non assuré.",
+    }
+    if notify_patient:
+        notify_patient_dossier_change(
+            patient,
+            title=titles.get(kind, "Assurance mise à jour"),
+            body=bodies.get(kind, ""),
+            notif_type=Notification.Type.DOSSIER_UPDATED,
+            event_type="insurance_updated",
+            section="assurance",
+            payload=data,
+            actor=actor,
+        )
+    else:
+        user = getattr(patient, "user", None)
+        if user is not None:
+            hub_bus.publish(user.id, event)
+    publish_patient_list(patient_id=data["patient_id"], actor=actor, kind="updated")
     return event

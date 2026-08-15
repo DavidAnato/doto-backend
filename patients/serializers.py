@@ -159,11 +159,15 @@ class UrgenceSerializer(serializers.ModelSerializer):
 
     def get_assureur(self, obj):
         assurance = getattr(obj, "assurance", None)
-        return assurance.assureur if assurance else ""
+        if not assurance or not getattr(assurance, "droits_valides", True):
+            return ""
+        return assurance.assureur or ""
 
     def get_num_police(self, obj):
         assurance = getattr(obj, "assurance", None)
-        return assurance.num_police if assurance else ""
+        if not assurance or not getattr(assurance, "droits_valides", True):
+            return ""
+        return assurance.num_police or ""
 
 
 class PatientDetailSerializer(serializers.ModelSerializer):

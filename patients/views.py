@@ -353,7 +353,7 @@ class PatientViewSet(viewsets.ModelViewSet):
             }
         )
 
-    @action(detail=True, methods=["get", "put", "patch"])
+    @action(detail=True, methods=["get", "put", "patch", "delete"])
     def assurance(self, request, pk=None):
         patient = self.get_object()
         instance = getattr(patient, "assurance", None)
@@ -362,10 +362,38 @@ class PatientViewSet(viewsets.ModelViewSet):
                 return Response({"detail": "Aucune assurance."}, status=status.HTTP_404_NOT_FOUND)
             return Response(AssuranceSerializer(instance).data)
         if not role_can_write(request.user.role, "assurance"):
-            raise PermissionDenied("Modification réservée au médecin ou à l'admin.")
+            raise PermissionDenied("Modification réservée au médecin, à la réception ou à l'admin.")
+        from notifications.services import publish_insurance_updated
+
+        if request.method == "DELETE":
+            if instance is None:
+                return Response({"detail": "Aucune assurance."}, status=status.HTTP_404_NOT_FOUND)
+            instance.delete()
+            log_action(
+                request,
+                "retirer_assurance",
+                target=patient.full_name,
+                patient_npi=patient.npi,
+            )
+            publish_insurance_updated(patient, actor=request.user, kind="removed")
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        created = instance is None
         serializer = AssuranceSerializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save(patient=patient)
+        saved = serializer.save(patient=patient)
+        log_action(
+            request,
+            "assurance_created" if created else "assurance_updated",
+            target=patient.full_name,
+            patient_npi=patient.npi,
+        )
+        publish_insurance_updated(
+            patient,
+            actor=request.user,
+            kind="created" if created else "updated",
+            assurance=saved,
+        )
         return Response(serializer.data)
 
     @action(detail=True, methods=["put", "patch"])
@@ -457,9 +485,18 @@ class MonDossierView(viewsets.ViewSet):
 
         if isinstance(assurance_data, dict) and assurance_data:
             instance = getattr(patient, "assurance", None)
+            created = instance is None
             ser = AssuranceSerializer(instance, data=assurance_data, partial=True)
             ser.is_valid(raise_exception=True)
-            ser.save(patient=patient)
+            saved = ser.save(patient=patient)
+            from notifications.services import publish_insurance_updated
+
+            publish_insurance_updated(
+                patient,
+                actor=request.user,
+                kind="created" if created else "updated",
+                assurance=saved,
+            )
 
         out = PatientDetailSerializer(patient, context={"request": request}).data
         out["profile_complete"] = bool(
@@ -510,7 +547,22 @@ class MonDossierView(viewsets.ViewSet):
             if instance is None:
                 return Response({"detail": "Aucune assurance."}, status=status.HTTP_404_NOT_FOUND)
             return Response(AssuranceSerializer(instance).data)
+        from notifications.services import publish_insurance_updated
+
+        if request.method == "DELETE":
+            if instance is None:
+                return Response({"detail": "Aucune assurance."}, status=status.HTTP_404_NOT_FOUND)
+            instance.delete()
+            publish_insurance_updated(patient, actor=request.user, kind="removed")
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        created = instance is None
         ser = AssuranceSerializer(instance, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
-        ser.save(patient=patient)
+        saved = ser.save(patient=patient)
+        publish_insurance_updated(
+            patient,
+            actor=request.user,
+            kind="created" if created else "updated",
+            assurance=saved,
+        )
         return Response(ser.data)
