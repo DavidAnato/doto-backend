@@ -461,9 +461,16 @@ class MonDossierView(viewsets.ViewSet):
         data = {k: v for k, v in request.data.items() if k in allowed}
         allergies = request.data.get("allergies")
         maladies = request.data.get("maladies_chroniques")
+        antecedents = request.data.get("antecedents")
         assurance_data = request.data.get("assurance")
 
-        if not data and allergies is None and maladies is None and assurance_data is None:
+        if (
+            not data
+            and allergies is None
+            and maladies is None
+            and antecedents is None
+            and assurance_data is None
+        ):
             return Response(
                 {
                     "detail": "Aucun champ autorisé. Le patient ne peut pas modifier les données médicales cliniques."
@@ -475,12 +482,14 @@ class MonDossierView(viewsets.ViewSet):
         if data:
             patient.save(update_fields=list(data.keys()) + ["updated_at"])
 
-        if allergies is not None or maladies is not None:
+        if allergies is not None or maladies is not None or antecedents is not None:
             dossier, _ = DossierMedical.objects.get_or_create(patient=patient)
             if allergies is not None:
                 dossier.allergies = allergies if isinstance(allergies, list) else []
             if maladies is not None:
                 dossier.maladies_chroniques = maladies if isinstance(maladies, list) else []
+            if antecedents is not None:
+                dossier.antecedents = antecedents if isinstance(antecedents, str) else ""
             dossier.save()
 
         if isinstance(assurance_data, dict) and assurance_data:

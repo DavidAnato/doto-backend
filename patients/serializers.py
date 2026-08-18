@@ -214,6 +214,7 @@ class PatientWriteSerializer(serializers.ModelSerializer):
         child=serializers.CharField(), required=False, write_only=True
     )
     maladies_chroniques = serializers.ListField(required=False, write_only=True)
+    antecedents = serializers.CharField(required=False, allow_blank=True, write_only=True)
 
     class Meta:
         model = Patient
@@ -222,28 +223,32 @@ class PatientWriteSerializer(serializers.ModelSerializer):
             "nom_pere", "nom_mere", "adresse_commune", "adresse_quartier",
             "groupe_sanguin", "electrophorese", "telephone", "email", "photo",
             "contact_urgence_nom", "contact_urgence_lien", "tel_urgence",
-            "allergies", "maladies_chroniques",
+            "allergies", "maladies_chroniques", "antecedents",
         ]
 
-    def _sync_dossier(self, patient, allergies, maladies):
+    def _sync_dossier(self, patient, allergies, maladies, antecedents=None):
         dossier, _ = DossierMedical.objects.get_or_create(patient=patient)
         if allergies is not None:
             dossier.allergies = allergies
         if maladies is not None:
             dossier.maladies_chroniques = maladies
+        if antecedents is not None:
+            dossier.antecedents = antecedents
         dossier.save()
 
     def create(self, validated_data):
         allergies = validated_data.pop("allergies", None)
         maladies = validated_data.pop("maladies_chroniques", None)
+        antecedents = validated_data.pop("antecedents", None)
         patient = super().create(validated_data)
-        self._sync_dossier(patient, allergies or [], maladies or [])
+        self._sync_dossier(patient, allergies or [], maladies or [], antecedents or "")
         return patient
 
     def update(self, instance, validated_data):
         allergies = validated_data.pop("allergies", None)
         maladies = validated_data.pop("maladies_chroniques", None)
+        antecedents = validated_data.pop("antecedents", None)
         patient = super().update(instance, validated_data)
-        if allergies is not None or maladies is not None:
-            self._sync_dossier(patient, allergies, maladies)
+        if allergies is not None or maladies is not None or antecedents is not None:
+            self._sync_dossier(patient, allergies, maladies, antecedents)
         return patient
