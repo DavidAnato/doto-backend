@@ -13,13 +13,25 @@ services:
     name: doto-backend
     runtime: python
     plan: free
+    # Native Environment — sans ces paquets, pytesseract échoue (binaire absent).
+    aptPackages:
+      - tesseract-ocr
+      - tesseract-ocr-fra
+      - tesseract-ocr-eng
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate --noinput
     startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --keep-alive 65
     healthCheckPath: /api/health/
     envVars:
-      # Obligatoire : RapidOCR n'existe pas pour Python 3.14 (défaut Render 2026)
       - key: PYTHON_VERSION
         value: "3.11.11"
+      - key: DOTO_OCR_ENGINE
+        value: "tesseract"
+      - key: DOTO_OCR_LANG
+        value: "fra+eng"
+      - key: DOTO_OCR_TIMEOUT
+        value: "25"
+      - key: TESSERACT_CMD
+        value: "/usr/bin/tesseract"
       - key: DJANGO_DEBUG
         value: "False"
       - key: DJANGO_BEHIND_PROXY

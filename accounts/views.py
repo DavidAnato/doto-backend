@@ -1,3 +1,5 @@
+import logging
+
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -34,6 +36,7 @@ from .serializers import (
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 def tokens_for(user):
@@ -315,26 +318,53 @@ class IdCardOcrView(APIView):
         upload = request.FILES.get("image") or request.FILES.get("photo") or request.FILES.get("file")
         if not upload:
             return Response(
-                {"detail": "Image de la carte requise (champ image)."},
+                {"ok": False, "code": "missing_image", "detail": "Image de la carte requise (champ image)."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if upload.size and upload.size > 12 * 1024 * 1024:
             return Response(
-                {"detail": "Image trop lourde (max 12 Mo)."},
+                {"ok": False, "code": "image_too_large", "detail": "Image trop lourde (max 12 Mo)."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         raw = upload.read()
+        logger.info("OCR upload size=%s name=%s", upload.size, getattr(upload, "name", ""))
         try:
             from .id_card_ocr import ocr_id_card
 
             data = ocr_id_card(raw)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-        except RuntimeError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        except Exception as e:  # noqa: BLE001
+        except TimeoutError as e:
+            logger.warning("OCR timeout: %s", e)
             return Response(
-                {"detail": f"Lecture impossible : {e}"},
+                {
+                    "ok": False,
+                    "code": "ocr_timeout",
+                    "detail": (
+                        "Délai dépassé pendant la lecture OCR. "
+                        "Réessayez avec une photo nette et bien cadrée."
+                    ),
+                },
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+        except ValueError as e:
+            logger.info("OCR NPI introuvable: %s", e)
+            return Response(
+                {"ok": False, "code": "npi_not_found", "detail": str(e)},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        except RuntimeError as e:
+            logger.warning("OCR indisponible: %s", e)
+            return Response(
+                {"ok": False, "code": "ocr_unavailable", "detail": str(e)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("OCR erreur inattendue")
+            return Response(
+                {
+                    "ok": False,
+                    "code": "ocr_error",
+                    "detail": f"Lecture impossible : {e}",
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

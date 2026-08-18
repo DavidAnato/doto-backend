@@ -1,8 +1,11 @@
 """
-OCR CIP / CEDEAO — PaddleOCR (ou RapidOCR) + association titre→valeur par géométrie.
+OCR CIP / CEDEAO — Tesseract (Render) + fallback RapidOCR/Paddle optionnels.
 
 CIP  : valeur à droite du libellé
 CEDEAO : valeur sous le libellé (sauf NPI / dates parfois à droite)
+
+Sur Render (512 Mo) : Tesseract via apt (`tesseract-ocr`, `tesseract-ocr-fra`,
+`tesseract-ocr-eng`). RapidOCR/Paddle trop lourds — ne pas les forcer en prod.
 """
 from __future__ import annotations
 
@@ -10,13 +13,16 @@ import io
 import logging
 import os
 import re
+import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps
 
 logger = logging.getLogger(__name__)
 
@@ -249,18 +255,218 @@ def _items_from_paddle(image_path: str) -> list[dict[str, Any]]:
 
 
 def _prepare_ocr_image(image_bytes: bytes) -> Image.Image:
-    """RGB, taille bornée — photos mobile trop grandes = timeout."""
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    """RGB, orientation EXIF, taille bornée — photos mobile trop grandes = timeout."""
+    img = Image.open(io.BytesIO(image_bytes))
+    img = ImageOps.exif_transpose(img) or img
+    img = img.convert("RGB")
     w, h = img.size
     longest = max(w, h)
     # Trop petit → upscale ; trop grand → downscale léger (garde + détail pour flou)
     if longest < 1400:
         scale = 1400 / longest
         img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
-    elif longest > 2200:
-        scale = 2200 / longest
+    elif longest > 2000:
+        scale = 2000 / longest
         img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
     return img
+
+
+_TESSDATA_CANDIDATES = (
+    "/usr/share/tesseract-ocr/5/tessdata",
+    "/usr/share/tesseract-ocr/4.00/tessdata",
+    "/usr/share/tesseract-ocr/tessdata",
+    "/usr/share/tessdata",
+)
+
+
+def _configure_tesseract() -> str:
+    """Pointe pytesseract vers le binaire + TESSDATA_PREFIX si besoin."""
+    import pytesseract
+
+    raw_cmd = (os.environ.get("TESSERACT_CMD") or "").strip()
+    cmd = raw_cmd
+    if cmd and not Path(cmd).exists():
+        cmd = shutil.which(cmd) or ""
+    if not cmd:
+        cmd = shutil.which("tesseract") or ""
+    if not cmd:
+        for candidate in (
+            "/usr/bin/tesseract",
+            "/usr/local/bin/tesseract",
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        ):
+            if Path(candidate).exists():
+                cmd = candidate
+                break
+    if not cmd:
+        raise RuntimeError(
+            "Tesseract introuvable. Sur Render, installer les paquets Native Environment "
+            "tesseract-ocr, tesseract-ocr-fra, tesseract-ocr-eng (render.yaml aptPackages) "
+            "puis redéployer. En local : installer Tesseract OCR."
+        )
+    pytesseract.pytesseract.tesseract_cmd = cmd
+
+    prefix = (os.environ.get("TESSDATA_PREFIX") or "").strip()
+    if prefix and not Path(prefix).is_dir():
+        logger.warning("TESSDATA_PREFIX invalide (%s) — détection auto", prefix)
+        prefix = ""
+    if not prefix:
+        for cand in _TESSDATA_CANDIDATES:
+            tessdir = Path(cand)
+            if tessdir.is_dir() and any(tessdir.glob("*.traineddata")):
+                os.environ["TESSDATA_PREFIX"] = cand
+                prefix = cand
+                break
+    return cmd
+
+
+def _tesseract_langs() -> list[str]:
+    preferred = (os.environ.get("DOTO_OCR_LANG") or "fra+eng").strip() or "fra+eng"
+    # fra manquant → eng seul, plutôt qu'un crash « Error opening data file »
+    ordered = [preferred, "fra+eng", "eng+fra", "fra", "eng"]
+    out: list[str] = []
+    for lang in ordered:
+        if lang not in out:
+            out.append(lang)
+    return out
+
+
+def _items_from_tesseract(image_bytes: bytes) -> list[dict[str, Any]]:
+    import pytesseract
+    from pytesseract import Output
+
+    _configure_tesseract()
+    img = _prepare_ocr_image(image_bytes)
+    gray = ImageOps.autocontrast(img.convert("L"), cutoff=1)
+    gray = gray.filter(ImageFilter.SHARPEN)
+
+    last_err: Exception | None = None
+    data = None
+    for lang in _tesseract_langs():
+        for psm in ("6", "4", "11"):
+            try:
+                candidate = pytesseract.image_to_data(
+                    gray,
+                    lang=lang,
+                    config=f"--psm {psm}",
+                    output_type=Output.DICT,
+                    timeout=20,
+                )
+                nonempty = sum(1 for t in (candidate.get("text") or []) if str(t).strip())
+                if nonempty >= 4:
+                    data = candidate
+                    logger.info("Tesseract ok lang=%s psm=%s blocs=%s", lang, psm, nonempty)
+                    break
+                last_err = RuntimeError(f"tesseract lang={lang} psm={psm}: peu de texte ({nonempty})")
+            except pytesseract.TesseractNotFoundError as e:
+                raise RuntimeError(
+                    "Tesseract introuvable (binaire). Vérifier aptPackages / TESSERACT_CMD."
+                ) from e
+            except pytesseract.TesseractError as e:
+                last_err = e
+                msg = str(e).lower()
+                if "failed loading language" in msg or "error opening data file" in msg:
+                    logger.warning("Tesseract langue indisponible (%s): %s", lang, e)
+                    break
+                continue
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                continue
+        if data:
+            break
+
+    if not data:
+        raise RuntimeError(f"Tesseract n'a lu aucun texte ({last_err})")
+
+    lines: dict[tuple[int, int, int], dict[str, Any]] = {}
+    n = len(data["text"])
+    for i in range(n):
+        text = str(data["text"][i] or "").strip()
+        if not text:
+            continue
+        try:
+            conf = float(data["conf"][i])
+        except (TypeError, ValueError):
+            conf = 0.0
+        if conf < 0:
+            continue
+        left = int(data["left"][i])
+        top = int(data["top"][i])
+        width = int(data["width"][i])
+        height = int(data["height"][i])
+        key = (int(data["block_num"][i]), int(data["par_num"][i]), int(data["line_num"][i]))
+        box = lines.get(key)
+        if box is None:
+            lines[key] = {
+                "text": text,
+                "x0": left,
+                "y0": top,
+                "x1": left + width,
+                "y1": top + height,
+            }
+        else:
+            box["text"] = f"{box['text']} {text}"
+            box["x0"] = min(box["x0"], left)
+            box["y0"] = min(box["y0"], top)
+            box["x1"] = max(box["x1"], left + width)
+            box["y1"] = max(box["y1"], top + height)
+
+    items: list[dict[str, Any]] = []
+    for box in lines.values():
+        x0, y0, x1, y1 = box["x0"], box["y0"], box["x1"], box["y1"]
+        items.append(
+            {
+                "text": box["text"].strip(),
+                "x": (x0 + x1) / 2,
+                "y": (y0 + y1) / 2,
+                "x0": float(x0),
+                "x1": float(x1),
+                "y0": float(y0),
+                "y1": float(y1),
+            }
+        )
+    items.sort(key=lambda i: (i["y"], i["x"]))
+    return items
+
+
+@lru_cache(maxsize=1)
+def ocr_engine_status() -> dict[str, Any]:
+    """Sonde légère pour /api/health/ — pas d'OCR d'image."""
+    status: dict[str, Any] = {
+        "engine": os.environ.get("DOTO_OCR_ENGINE", "tesseract"),
+        "available": False,
+        "tesseract_cmd": None,
+        "tessdata": os.environ.get("TESSDATA_PREFIX") or None,
+        "version": None,
+        "langs": [],
+        "detail": None,
+    }
+    try:
+        import pytesseract
+
+        cmd = _configure_tesseract()
+        status["tesseract_cmd"] = cmd
+        status["tessdata"] = os.environ.get("TESSDATA_PREFIX") or status["tessdata"]
+        try:
+            status["version"] = str(pytesseract.get_tesseract_version())
+        except Exception as e:  # noqa: BLE001
+            status["detail"] = f"version: {e}"
+            return status
+        try:
+            langs = pytesseract.get_languages(config="")
+            status["langs"] = langs
+        except Exception:  # noqa: BLE001
+            langs = []
+        missing = [x for x in ("fra", "eng") if x not in langs]
+        if missing and langs:
+            status["detail"] = f"langues manquantes: {', '.join(missing)}"
+        status["available"] = True
+        if not status["detail"]:
+            status["detail"] = "tesseract prêt"
+    except Exception as e:  # noqa: BLE001
+        status["detail"] = str(e)
+        logger.warning("OCR status: %s", e)
+    return status
 
 
 @lru_cache(maxsize=1)
@@ -304,15 +510,26 @@ def _items_from_rapid(image_bytes: bytes) -> list[dict[str, Any]]:
 def read_items(image_bytes: bytes) -> tuple[list[dict[str, Any]], str]:
     """Retourne (items spatiaux, moteur).
 
-    Par défaut RapidOCR (rapide, fiable ici). PaddleOCR seulement si
-    DOTO_OCR_ENGINE=paddle — sur Windows il est souvent trop lent / cassé (oneDNN).
+    Défaut : Tesseract (léger, viable Render 512 Mo). RapidOCR / Paddle seulement
+    si installés et DOTO_OCR_ENGINE=rapid|paddle|auto — trop lourds pour le free.
     """
     errors: list[str] = []
-    engine_pref = os.environ.get("DOTO_OCR_ENGINE", "rapid").lower().strip()
+    engine_pref = os.environ.get("DOTO_OCR_ENGINE", "tesseract").lower().strip()
+    try_tesseract = engine_pref in ("tesseract", "tess", "auto", "")
+    try_rapid = engine_pref in ("rapid", "rapidocr", "auto")
     try_paddle = engine_pref in ("paddle", "paddleocr", "auto")
-    try_rapid_first = engine_pref in ("rapid", "rapidocr", "auto", "")
 
-    if try_rapid_first:
+    if try_tesseract:
+        try:
+            items = _items_from_tesseract(image_bytes)
+            if items:
+                return items, "tesseract"
+            errors.append("tesseract: aucun texte")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"tesseract: {e}")
+            logger.warning("Tesseract indisponible: %s", e)
+
+    if try_rapid:
         try:
             items = _items_from_rapid(image_bytes)
             if items:
@@ -342,19 +559,19 @@ def read_items(image_bytes: bytes) -> tuple[list[dict[str, Any]], str]:
             if path:
                 Path(path).unlink(missing_ok=True)
 
-    # Dernier recours si on a forcé paddle en premier
-    if not try_rapid_first:
+    if not try_tesseract:
         try:
-            items = _items_from_rapid(image_bytes)
+            items = _items_from_tesseract(image_bytes)
             if items:
-                return items, "rapidocr-spatial"
+                return items, "tesseract"
         except Exception as e:  # noqa: BLE001
-            errors.append(f"rapidocr: {e}")
+            errors.append(f"tesseract: {e}")
 
-    raise RuntimeError(
-        "OCR spatial indisponible. Installez rapidocr-onnxruntime "
-        "(ou paddleocr). " + " | ".join(errors[:2])
+    hint = (
+        "OCR indisponible. Sur Render : paquets apt tesseract-ocr + tesseract-ocr-fra "
+        "+ tesseract-ocr-eng (Native Environment). "
     )
+    raise RuntimeError(hint + " | ".join(errors[:3]))
 
 
 # ---------------------------------------------------------------------------
@@ -975,15 +1192,36 @@ def parse_items(items: list[dict]) -> dict[str, Any]:
 
 
 def ocr_id_card(image_bytes: bytes) -> dict[str, Any]:
-    items, engine = read_items(image_bytes)
-    data = parse_items(items)
-    data["ocr_engine"] = engine
-    data["raw_text"] = "\n".join(i["text"] for i in items)[:3000]
-    if not data.get("npi"):
-        raise ValueError(
-            "NPI introuvable. Cadrez toute la carte CIP ou CEDEAO, NPI bien lisible."
+    timeout = int(os.environ.get("DOTO_OCR_TIMEOUT", "25"))
+
+    def _run() -> dict[str, Any]:
+        items, engine = read_items(image_bytes)
+        data = parse_items(items)
+        data["ocr_engine"] = engine
+        data["raw_text"] = "\n".join(i["text"] for i in items)[:3000]
+        logger.info(
+            "OCR ok engine=%s npi=%s type=%s blocs=%s",
+            engine,
+            data.get("npi") or "-",
+            data.get("card_type"),
+            len(items),
         )
-    return data
+        if not data.get("npi"):
+            raise ValueError(
+                "NPI introuvable. Cadrez toute la carte CIP ou CEDEAO, NPI bien lisible."
+            )
+        return data
+
+    if timeout <= 0:
+        return _run()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_run)
+        try:
+            return future.result(timeout=timeout)
+        except FuturesTimeout as e:
+            raise TimeoutError(
+                f"OCR timeout après {timeout}s. Réessayez avec une photo nette et cadrée."
+            ) from e
 
 
 # Compat tests unitaires texte-only (sans géométrie)

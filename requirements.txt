@@ -9,10 +9,8 @@ cryptography>=43.0
 qrcode[pil]>=7.4
 Pillow>=10.4
 reportlab>=4.2
-# OCR pièce d'identité (RapidOCR — léger ; pas de Paddle sur Render)
-rapidocr-onnxruntime>=1.3.0,<1.5
-numpy>=1.26,<2.1
-opencv-python-headless>=4.8,<4.11
+# OCR pièce d'identité (Tesseract — viable Render 512 Mo ; binaire via aptPackages)
+pytesseract>=0.3.10
 # Production / Render
 gunicorn>=22.0
 whitenoise>=6.6

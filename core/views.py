@@ -8,12 +8,17 @@ from rest_framework.response import Response
 @permission_classes([AllowAny])
 def health(request):
     """Sonde de disponibilité (CDC §7 — 99,5% uptime)."""
-    return Response(
-        {
-            "status": "ok",
-            "service": "doto-backend",
-            "product": settings.PRODUCT_NAME,
-            "brand": settings.BRAND,
-            "card": settings.CARD_PRODUCT,
-        }
-    )
+    payload = {
+        "status": "ok",
+        "service": "doto-backend",
+        "product": settings.PRODUCT_NAME,
+        "brand": settings.BRAND,
+        "card": settings.CARD_PRODUCT,
+    }
+    try:
+        from accounts.id_card_ocr import ocr_engine_status
+
+        payload["ocr"] = ocr_engine_status()
+    except Exception as exc:  # noqa: BLE001
+        payload["ocr"] = {"available": False, "detail": str(exc)}
+    return Response(payload)

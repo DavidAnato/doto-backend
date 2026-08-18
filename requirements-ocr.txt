@@ -1,5 +1,12 @@
-# OCR avancé (local) — PaddleOCR en plus de RapidOCR déjà dans requirements.txt.
-# Python 3.11 ou 3.12 recommandé.
+# OCR avancé — LOCAL UNIQUEMENT.
+# RapidOCR / Paddle / OpenCV sont trop lourds pour Render free/starter (512 Mo) :
+# OOM, timeout HTTP 30 s, build trop long. En prod : Tesseract (requirements.txt + apt).
+#
 #   pip install -r requirements-ocr.txt
+#   set DOTO_OCR_ENGINE=rapid   (ou paddle / auto)
+#
+rapidocr-onnxruntime>=1.3.0,<1.5
+numpy>=1.26,<2.1
+opencv-python-headless>=4.8,<4.11
 paddlepaddle>=2.6.0
 paddleocr>=2.7.0

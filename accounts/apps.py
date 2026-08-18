@@ -12,13 +12,20 @@ class AccountsConfig(AppConfig):
     verbose_name = "Comptes & structures"
 
     def ready(self):
-        # Précharge RapidOCR en arrière-plan (évite timeout 1er scan mobile ~40s).
+        # Vérifie Tesseract au boot (pas RapidOCR : trop lourd / OOM sur Render 512 Mo).
         def _warm():
             try:
-                from .id_card_ocr import _rapid_engine
+                from .id_card_ocr import ocr_engine_status
 
-                _rapid_engine()
-                logger.info("OCR RapidOCR préchargé")
+                status = ocr_engine_status()
+                if status.get("available"):
+                    logger.info(
+                        "OCR Tesseract prêt cmd=%s langs=%s",
+                        status.get("tesseract_cmd"),
+                        status.get("langs"),
+                    )
+                else:
+                    logger.warning("OCR Tesseract absent: %s", status.get("detail"))
             except Exception as e:  # noqa: BLE001
                 logger.warning("Préchargement OCR ignoré: %s", e)
 
