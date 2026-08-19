@@ -1,4 +1,4 @@
-# OCR avancé — LOCAL UNIQUEMENT.
+# OCR avancé - LOCAL UNIQUEMENT.
 # RapidOCR / Paddle / OpenCV sont trop lourds pour Render free/starter (512 Mo) :
 # OOM, timeout HTTP 30 s, build trop long. En prod : Tesseract (requirements.txt + apt).
 #

@@ -1,4 +1,4 @@
-# Render Blueprint — doto-backend (API DOTO+)
+# Render Blueprint - doto-backend (API DOTO+)
 # Docs: https://render.com/docs/blueprint-spec
 # SSE in-memory → webService avec un seul worker gunicorn.
 
@@ -13,7 +13,7 @@ services:
     name: doto-backend
     runtime: python
     plan: free
-    # Native Environment — sans ces paquets, pytesseract échoue (binaire absent).
+    # Native Environment - sans ces paquets, pytesseract échoue (binaire absent).
     aptPackages:
       - tesseract-ocr
       - tesseract-ocr-fra
