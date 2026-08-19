@@ -1,13 +1,24 @@
 from rest_framework import serializers
 
 from core.contracts import PIN_ERROR, PIN_REGEX, OTP_ERROR, OTP_REGEX, HOSPITAL_REQUIRED_ROLES
+from core.permissions import Roles
 
 from .models import AffiliationPro, KycDossier, StructureSante
+from .phone import normalize_phone
 from .photo_utils import user_photo_url
 
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
+
+ALLOWED_PRO_REGISTER_ROLES = (
+    Roles.MEDECIN,
+    Roles.INFIRMIER,
+    Roles.PHARMACIEN,
+    Roles.LABORANTIN,
+    Roles.AMBULANCIER,
+    Roles.RECEPTIONNISTE,
+)
 
 
 class StructureSanteSerializer(serializers.ModelSerializer):
@@ -40,6 +51,8 @@ class UserSerializer(serializers.ModelSerializer):
     pin_set = serializers.BooleanField(source="has_pin", read_only=True)
     affiliations = serializers.SerializerMethodField()
     kyc = serializers.SerializerMethodField()
+    pending_validation = serializers.SerializerMethodField()
+    compte_statut = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -50,10 +63,13 @@ class UserSerializer(serializers.ModelSerializer):
             "specialite",
             "type_exercice", "ville_exercice", "nom_etablissement",
             "numero_autorisation", "numero_ordre", "email_pro", "ligne_pro",
-            "affiliations", "kyc",
+            "affiliations", "kyc", "pending_validation", "compte_statut",
             "photo_url", "photo_required", "pin_set", "date_joined",
         ]
-        read_only_fields = ["is_locked", "date_joined", "photo_url", "photo_required", "pin_set"]
+        read_only_fields = [
+            "is_locked", "date_joined", "photo_url", "photo_required", "pin_set",
+            "pending_validation", "compte_statut",
+        ]
 
     def get_photo_url(self, obj):
         request = self.context.get("request")
@@ -74,6 +90,30 @@ class UserSerializer(serializers.ModelSerializer):
         if kyc is None:
             return None
         return KycDossierSerializer(kyc, context=self.context).data
+
+    def get_pending_validation(self, obj):
+        if not getattr(obj, "actif", True):
+            return False
+        kyc = getattr(obj, "kyc", None)
+        if kyc is not None and kyc.statut == KycDossier.Statut.EN_ATTENTE:
+            return True
+        affiliations = getattr(obj, "affiliations", None)
+        if affiliations is None:
+            return False
+        cached = None
+        cache = getattr(obj, "_prefetched_objects_cache", None)
+        if cache is not None:
+            cached = cache.get("affiliations")
+        if cached is not None:
+            return any(a.statut == AffiliationPro.Statut.EN_ATTENTE for a in cached)
+        return affiliations.filter(statut=AffiliationPro.Statut.EN_ATTENTE).exists()
+
+    def get_compte_statut(self, obj):
+        if not getattr(obj, "actif", True):
+            return "desactive"
+        if self.get_pending_validation(obj):
+            return "en_attente"
+        return "actif"
 
 
 class UserWriteSerializer(serializers.ModelSerializer):
@@ -243,6 +283,114 @@ class ProLoginSerializer(serializers.Serializer):
 
     username = serializers.CharField()
     password = serializers.CharField(style={"input_type": "password"})
+
+
+class ProRegisterSerializer(serializers.Serializer):
+    """Inscription publique d'un professionnel (pas admin, pas patient)."""
+
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(
+        min_length=8, write_only=True, style={"input_type": "password"}
+    )
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    email = serializers.EmailField(required=False, allow_blank=True, default="")
+    role = serializers.ChoiceField(choices=ALLOWED_PRO_REGISTER_ROLES)
+    type_exercice = serializers.ChoiceField(choices=User.TypeExercice.choices)
+    ville_exercice = serializers.CharField(
+        required=False, allow_blank=True, max_length=120, default=""
+    )
+    nom_etablissement = serializers.CharField(
+        required=False, allow_blank=True, max_length=200, default=""
+    )
+    numero_autorisation = serializers.CharField(
+        required=False, allow_blank=True, max_length=80, default=""
+    )
+    numero_ordre = serializers.CharField(
+        required=False, allow_blank=True, max_length=80, default=""
+    )
+    email_pro = serializers.EmailField(required=False, allow_blank=True, default="")
+    ligne_pro = serializers.CharField(
+        required=False, allow_blank=True, max_length=30, default=""
+    )
+    specialite = serializers.CharField(
+        required=False, allow_blank=True, max_length=80, default=""
+    )
+    structure_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list
+    )
+    structure_principale = serializers.IntegerField(
+        required=False, allow_null=True, default=None
+    )
+    etablissement_libre = serializers.DictField(required=False)
+
+    def validate_username(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("Identifiant requis.")
+        if User.objects.filter(username__iexact=value).exists():
+            raise serializers.ValidationError("Cet identifiant est déjà utilisé.")
+        return value
+
+    def validate_role(self, value):
+        if value in (Roles.ADMIN, Roles.PATIENT):
+            raise serializers.ValidationError("Rôle non autorisé pour l'inscription publique.")
+        if value not in ALLOWED_PRO_REGISTER_ROLES:
+            raise serializers.ValidationError("Rôle professionnel invalide.")
+        return value
+
+    def validate(self, attrs):
+        email = (attrs.get("email") or attrs.get("email_pro") or "").strip()
+        if email and User.objects.filter(email__iexact=email).exclude(email="").exists():
+            raise serializers.ValidationError({"email": "Cet email est déjà utilisé."})
+        attrs["email"] = email
+        kind = attrs.get("type_exercice")
+        nom = (attrs.get("nom_etablissement") or "").strip()
+        libre = attrs.get("etablissement_libre") or {}
+        nom_libre = (libre.get("nom") or nom).strip()
+        ids = attrs.get("structure_ids") or []
+        principale = attrs.get("structure_principale")
+        independant = kind == User.TypeExercice.INDEPENDANT
+        if independant:
+            if not nom_libre:
+                raise serializers.ValidationError(
+                    {"nom_etablissement": "Indiquez le nom de votre cabinet / exercice."}
+                )
+        else:
+            if not ids and not nom_libre:
+                raise serializers.ValidationError(
+                    {"structure_ids": "Choisissez un établissement ou saisissez un nom."}
+                )
+            if ids and not principale:
+                raise serializers.ValidationError(
+                    {"structure_principale": "Désignez l'établissement principal."}
+                )
+            if principale and ids and principale not in ids:
+                raise serializers.ValidationError(
+                    {
+                        "structure_principale": (
+                            "Le principal doit faire partie des établissements choisis."
+                        )
+                    }
+                )
+        if ids:
+            found = set(
+                StructureSante.objects.filter(pk__in=ids).values_list("id", flat=True)
+            )
+            if any(i not in found for i in ids):
+                raise serializers.ValidationError(
+                    {"structure_ids": "Établissement introuvable."}
+                )
+        if nom_libre and not (libre.get("nom") or "").strip():
+            attrs["etablissement_libre"] = {
+                "nom": nom_libre,
+                "ville": attrs.get("ville_exercice") or "",
+                "type": kind,
+            }
+        ligne = attrs.get("ligne_pro") or ""
+        if ligne:
+            attrs["ligne_pro"] = normalize_phone(ligne)
+        return attrs
 
 
 class RequestOtpSerializer(serializers.Serializer):

@@ -276,6 +276,41 @@ class AdminAffiliationViewSet(viewsets.ModelViewSet):
         return Response(AffiliationProSerializer(aff).data)
 
 
+def attach_register_affiliations(user, data):
+    """Rattache les établissements du catalogue à l'inscription (statut en attente)."""
+    ids = data.get("structure_ids") or []
+    principale_id = data.get("structure_principale")
+    structs = list(StructureSante.objects.filter(pk__in=ids))
+    if structs:
+        user.structures.set(structs)
+        if principale_id:
+            user.structure_principale_id = principale_id
+            user.save(update_fields=["structure_principale"])
+        kind = data.get("type_exercice") or AffiliationPro.Kind.ETABLISSEMENT
+        for struct in structs:
+            AffiliationPro.objects.update_or_create(
+                user=user,
+                structure=struct,
+                defaults={
+                    "nom_etablissement": struct.nom,
+                    "kind": (
+                        kind
+                        if kind in dict(AffiliationPro.Kind.choices)
+                        else AffiliationPro.Kind.ETABLISSEMENT
+                    ),
+                    "ville": data.get("ville_exercice") or struct.commune or "",
+                    "numero_autorisation": data.get("numero_autorisation") or "",
+                    "numero_ordre": data.get("numero_ordre") or "",
+                    "email_pro": data.get("email_pro") or "",
+                    "ligne_pro": data.get("ligne_pro") or "",
+                    "principal": struct.pk == principale_id,
+                    "statut": AffiliationPro.Statut.EN_ATTENTE,
+                },
+            )
+    apply_pro_profile(user, data)
+    return user
+
+
 def apply_pro_profile(user, data):
     """Applique les champs d'inscription professionnelle (MeView / UserWrite)."""
     update_fields = []

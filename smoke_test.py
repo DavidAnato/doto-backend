@@ -74,6 +74,54 @@ reg = show(
 )
 assert reg.status_code == 201
 
+# Inscription professionnelle publique (user + profil + affiliations)
+from accounts.models import StructureSante
+
+struct = StructureSante.objects.first()
+uname = f"proreg{int(time.time()) % 10000000}"
+pro_payload = {
+    "username": uname,
+    "password": "ProReg123!",
+    "first_name": "Awa",
+    "last_name": "Kpo",
+    "role": "medecin",
+    "type_exercice": "independant" if struct is None else "etablissement_sante",
+    "ville_exercice": "Cotonou",
+    "nom_etablissement": "Clinique Test Inscription",
+    "numero_autorisation": "890094/BEN",
+    "numero_ordre": "12345/ON/DEPT/2023",
+    "email_pro": f"{uname}@doto.test",
+    "ligne_pro": "+229 97 11 22 33",
+}
+if struct is not None:
+    pro_payload["structure_ids"] = [struct.id]
+    pro_payload["structure_principale"] = struct.id
+hosp_public = show("hospitals public (inscription)", c.get("/api/auth/hospitals/"))
+assert hosp_public.status_code == 200
+pro_reg = show(
+    "pro register",
+    c.post(
+        "/api/auth/pro/register/",
+        data=json.dumps(pro_payload),
+        content_type="application/json",
+    ),
+)
+assert pro_reg.status_code == 201, pro_reg.content
+pro_body = pro_reg.json()
+assert pro_body.get("access")
+assert pro_body.get("pending_validation") is True
+assert pro_body.get("user", {}).get("role") == "medecin"
+assert pro_body.get("user", {}).get("role") != "admin"
+# Login du compte fraîchement créé (sans casser le login existant)
+login_pro(uname, "ProReg123!")
+# Rôle admin interdit
+admin_try = c.post(
+    "/api/auth/pro/register/",
+    data=json.dumps({**pro_payload, "username": uname + "adm", "role": "admin"}),
+    content_type="application/json",
+)
+assert admin_try.status_code == 400, admin_try.content
+
 # Login OTP patient (nouveau compte)
 show(
     "request otp login new",

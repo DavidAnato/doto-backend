@@ -14,6 +14,7 @@ from .views import (
     PatientPinLoginView,
     PatientRegisterView,
     ProLoginView,
+    ProRegisterView,
     RequestOtpView,
     SetPinView,
     StructureSanteViewSet,
@@ -39,6 +40,7 @@ router.register("me/affiliations", MyAffiliationViewSet, basename="my-affiliatio
 urlpatterns = [
     path("otp/", RequestOtpView.as_view(), name="request-otp"),
     path("login/", ProLoginView.as_view(), name="pro-login"),
+    path("pro/register/", ProRegisterView.as_view(), name="pro-register"),
     path("patient/login/", PatientLoginView.as_view(), name="patient-login"),
     path("patient/register/", PatientRegisterView.as_view(), name="patient-register"),
     path("patient/ocr-id/", IdCardOcrView.as_view(), name="patient-ocr-id"),

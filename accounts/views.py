@@ -4,6 +4,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.base import ContentFile
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -27,6 +28,7 @@ from .serializers import (
     PatientPinLoginSerializer,
     PatientRegisterSerializer,
     ProLoginSerializer,
+    ProRegisterSerializer,
     RequestOtpSerializer,
     SetPinSerializer,
     StructureSanteSerializer,
@@ -191,6 +193,73 @@ class ProLoginView(APIView):
                 "pin_required": True,
                 **tokens_for(auth_user),
             }
+        )
+
+
+class ProRegisterView(APIView):
+    """Inscription professionnelle publique : crée user + profil + affiliations en attente."""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ProRegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        from .kyc_views import attach_register_affiliations
+        from .models import KycDossier
+
+        with transaction.atomic():
+            user = User(
+                username=data["username"],
+                first_name=(data.get("first_name") or "").strip(),
+                last_name=(data.get("last_name") or "").strip(),
+                email=data.get("email") or data.get("email_pro") or "",
+                telephone=data.get("ligne_pro") or "",
+                role=data["role"],
+                actif=True,
+                is_staff=False,
+                is_superuser=False,
+                specialite=data.get("specialite") or "Médecine générale",
+                type_exercice=data["type_exercice"],
+                ville_exercice=data.get("ville_exercice") or "",
+                nom_etablissement=data.get("nom_etablissement") or "",
+                numero_autorisation=data.get("numero_autorisation") or "",
+                numero_ordre=data.get("numero_ordre") or "",
+                email_pro=data.get("email_pro") or data.get("email") or "",
+                ligne_pro=data.get("ligne_pro") or "",
+            )
+            user.set_password(data["password"])
+            user.save()
+            attach_register_affiliations(user, data)
+            KycDossier.objects.get_or_create(
+                user=user,
+                defaults={
+                    "subject": KycDossier.Subject.PROFESSIONNEL,
+                    "statut": KycDossier.Statut.EN_ATTENTE,
+                    "nom": user.last_name,
+                    "prenom": user.first_name,
+                    "telephone": user.telephone,
+                },
+            )
+
+        user = (
+            User.objects.prefetch_related("structures", "affiliations")
+            .select_related("structure_principale", "kyc")
+            .get(pk=user.pk)
+        )
+        log_action(request, "register", target=f"pro:{user.username}")
+        payload_user = user_data(user, request)
+        return Response(
+            {
+                "user": payload_user,
+                "pin_set": False,
+                "pin_required": True,
+                "pending_validation": True,
+                "compte_statut": payload_user.get("compte_statut") or "en_attente",
+                **tokens_for(user),
+            },
+            status=status.HTTP_201_CREATED,
         )
 
 
@@ -683,9 +752,12 @@ class StructureSanteViewSet(viewsets.ModelViewSet):
 
 
 class HospitalCatalogView(APIView):
-    """Liste JSON des hôpitaux du Bénin (catalogue) + structures seedées."""
+    """Liste JSON des hôpitaux du Bénin (catalogue) + structures seedées.
 
-    permission_classes = [IsAuthenticated]
+    Public (AllowAny) : nécessaire à l'inscription professionnelle avant login.
+    """
+
+    permission_classes = [AllowAny]
 
     def get(self, request):
         from .hospital_catalog import load_hospitals
