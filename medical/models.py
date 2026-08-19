@@ -50,7 +50,7 @@ class Consultation(models.Model):
 
     def __str__(self):
         spec = self.specialite or "Consultation"
-        return f"{spec} — {self.patient.full_name} ({self.date:%d/%m/%Y})"
+        return f"{spec} - {self.patient.full_name} ({self.date:%d/%m/%Y})"
 
 
 class Ordonnance(models.Model):
@@ -59,8 +59,11 @@ class Ordonnance(models.Model):
     class Statut(models.TextChoices):
         ACTIVE = "active", "Active"
         TERMINEE = "terminee", "Terminée"
-        DISPENSEE = "dispensee", "Dispensée"
+        PAYEE = "payee", "Payé"
+        DISPENSEE = "dispensee", "Payé"  # alias rétrocompat (ancien « Dispensé »)
         ANNULEE = "annulee", "Annulée"
+
+    PAID_VALUES = (Statut.PAYEE, Statut.DISPENSEE, "dispense")
 
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="ordonnances")
     medecin = models.ForeignKey(
@@ -72,7 +75,7 @@ class Ordonnance(models.Model):
         Consultation, on_delete=models.SET_NULL, null=True, blank=True, related_name="ordonnances"
     )
     date = models.DateField()
-    statut = models.CharField(max_length=12, choices=Statut.choices, default=Statut.ACTIVE)
+    statut = models.CharField(max_length=16, choices=Statut.choices, default=Statut.ACTIVE)
     instructions = models.TextField(blank=True)
     signature_electronique = models.CharField(max_length=255, blank=True)
     # Interactions médicamenteuses détectées (CDC §3.5)
@@ -90,7 +93,7 @@ class Ordonnance(models.Model):
         ordering = ["-date"]
 
     def __str__(self):
-        return f"Ordonnance {self.patient.full_name} — {self.date}"
+        return f"Ordonnance {self.patient.full_name} - {self.date}"
 
 
 class Medicament(models.Model):
@@ -165,7 +168,7 @@ class Examen(models.Model):
         ordering = ["-date"]
 
     def __str__(self):
-        return f"{self.type_examen} — {self.patient.full_name}"
+        return f"{self.type_examen} - {self.patient.full_name}"
 
 
 class ConstanteVitale(models.Model):
@@ -192,7 +195,7 @@ class ConstanteVitale(models.Model):
 
 
 class BonExamen(models.Model):
-    """Bon de prescription d'examens (1..n lignes) — workflow labo."""
+    """Bon de prescription d'examens (1..n lignes) - workflow labo."""
 
     class Statut(models.TextChoices):
         DEMANDE = "demande", "Demandé"
@@ -238,7 +241,7 @@ class BonExamen(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"Bon #{self.pk} — {self.patient.full_name} ({self.get_statut_display()})"
+        return f"Bon #{self.pk} - {self.patient.full_name} ({self.get_statut_display()})"
 
     def refresh_statut_from_lignes(self, save=True):
         """Passe en résultat disponible si toutes les lignes ont un résultat."""

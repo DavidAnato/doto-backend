@@ -14,6 +14,7 @@ class StructureSante(models.Model):
         CENTRE = "centre", "Centre de santé"
         PHARMACIE = "pharmacie", "Pharmacie"
         LABORATOIRE = "laboratoire", "Laboratoire"
+        INDEPENDANT = "independant", "Indépendant"
 
     nom = models.CharField(max_length=200)
     type = models.CharField(max_length=20, choices=Type.choices, default=Type.CLINIQUE)
@@ -64,7 +65,7 @@ class User(AbstractUser):
 
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.MEDECIN)
     telephone = models.CharField(max_length=30, blank=True)
-    # Photo d'identité (visage centré) — obligatoire pour profil complet.
+    # Photo d'identité (visage centré) - obligatoire pour profil complet.
     photo = models.ImageField(
         upload_to="users/photos/",
         null=True,
@@ -88,10 +89,25 @@ class User(AbstractUser):
     failed_login_attempts = models.PositiveIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
 
-    # Spécialité principale (médecins) — préremplit la consultation, modifiable.
-    specialite = models.CharField(max_length=80, blank=True, default="Médecine générale")
+    class TypeExercice(models.TextChoices):
+        ETABLISSEMENT = "etablissement_sante", "Établissement de santé"
+        PHARMACIE = "pharmacie", "Pharmacie"
+        LABORATOIRE = "laboratoire", "Laboratoire"
+        INDEPENDANT = "independant", "Indépendant"
 
-    # PIN 4 chiffres — verrouillage appareil/session (obligatoire pour les pros)
+    # Spécialité principale (médecins) - préremplit la consultation, modifiable.
+    specialite = models.CharField(max_length=80, blank=True, default="Médecine générale")
+    type_exercice = models.CharField(
+        max_length=32, choices=TypeExercice.choices, blank=True
+    )
+    ville_exercice = models.CharField(max_length=120, blank=True)
+    nom_etablissement = models.CharField(max_length=200, blank=True)
+    numero_autorisation = models.CharField(max_length=80, blank=True)
+    numero_ordre = models.CharField(max_length=80, blank=True)
+    email_pro = models.EmailField(blank=True)
+    ligne_pro = models.CharField(max_length=30, blank=True)
+
+    # PIN 4 chiffres - verrouillage appareil/session (obligatoire pour les pros)
     pin_hash = models.CharField(max_length=128, blank=True)
     failed_pin_attempts = models.PositiveIntegerField(default=0)
     pin_locked_until = models.DateTimeField(null=True, blank=True)
@@ -101,7 +117,7 @@ class User(AbstractUser):
         verbose_name_plural = "Utilisateurs"
 
     def __str__(self):
-        return f"{self.get_full_name() or self.username} — {self.get_role_display()}"
+        return f"{self.get_full_name() or self.username} - {self.get_role_display()}"
 
     @property
     def is_locked(self):
@@ -143,3 +159,108 @@ class User(AbstractUser):
         self.failed_login_attempts = 0
         self.locked_until = None
         self.save(update_fields=["failed_login_attempts", "locked_until"])
+
+
+class AffiliationPro(models.Model):
+    """Rattachement d'un professionnel à un établissement (catalogue ou libre)."""
+
+    class Kind(models.TextChoices):
+        ETABLISSEMENT = "etablissement_sante", "Établissement de santé"
+        PHARMACIE = "pharmacie", "Pharmacie"
+        LABORATOIRE = "laboratoire", "Laboratoire"
+        INDEPENDANT = "independant", "Indépendant"
+
+    class Statut(models.TextChoices):
+        BROUILLON = "brouillon", "Brouillon"
+        EN_ATTENTE = "en_attente", "En attente de validation"
+        VALIDE = "valide", "Validé"
+        REFUSE = "refuse", "Refusé"
+
+    user = models.ForeignKey(
+        "User",
+        on_delete=models.CASCADE,
+        related_name="affiliations",
+    )
+    structure = models.ForeignKey(
+        StructureSante,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="affiliations",
+    )
+    nom_etablissement = models.CharField(max_length=200, blank=True)
+    kind = models.CharField(max_length=32, choices=Kind.choices, default=Kind.ETABLISSEMENT)
+    ville = models.CharField(max_length=120, blank=True)
+    numero_autorisation = models.CharField(max_length=80, blank=True)
+    numero_ordre = models.CharField(max_length=80, blank=True)
+    email_pro = models.EmailField(blank=True)
+    ligne_pro = models.CharField(max_length=30, blank=True)
+    principal = models.BooleanField(default=False)
+    statut = models.CharField(
+        max_length=20, choices=Statut.choices, default=Statut.EN_ATTENTE, db_index=True
+    )
+    motif_refus = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Affiliation professionnelle"
+        verbose_name_plural = "Affiliations professionnelles"
+        ordering = ["-principal", "-created_at"]
+
+    def __str__(self):
+        nom = self.nom_etablissement or (self.structure.nom if self.structure else "Établissement")
+        return f"{self.user_id} - {nom}"
+
+
+class KycDossier(models.Model):
+    """KYC patient ou professionnel : pièces, selfie, infos, validation admin."""
+
+    class Subject(models.TextChoices):
+        PATIENT = "patient", "Patient"
+        PROFESSIONNEL = "professionnel", "Professionnel"
+
+    class Statut(models.TextChoices):
+        BROUILLON = "brouillon", "Brouillon"
+        EN_ATTENTE = "en_attente", "En attente de validation"
+        VALIDE = "valide", "Validé"
+        REFUSE = "refuse", "Refusé"
+
+    user = models.OneToOneField(
+        "User", on_delete=models.CASCADE, related_name="kyc"
+    )
+    subject = models.CharField(max_length=20, choices=Subject.choices, default=Subject.PATIENT)
+    statut = models.CharField(
+        max_length=20, choices=Statut.choices, default=Statut.BROUILLON, db_index=True
+    )
+    motif_refus = models.TextField(blank=True)
+    piece_recto = models.ImageField(upload_to="kyc/recto/", null=True, blank=True)
+    piece_verso = models.ImageField(upload_to="kyc/verso/", null=True, blank=True)
+    selfie = models.ImageField(upload_to="kyc/selfie/", null=True, blank=True)
+    nom = models.CharField(max_length=120, blank=True)
+    prenom = models.CharField(max_length=120, blank=True)
+    date_naissance = models.DateField(null=True, blank=True)
+    lieu_naissance = models.CharField(max_length=120, blank=True)
+    npi = models.CharField(max_length=30, blank=True)
+    telephone = models.CharField(max_length=30, blank=True)
+    sexe = models.CharField(max_length=1, blank=True)
+    ocr_payload = models.JSONField(default=dict, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        "User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="kyc_reviews",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Dossier KYC"
+        verbose_name_plural = "Dossiers KYC"
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return f"KYC {self.user_id} ({self.get_statut_display()})"

@@ -18,7 +18,7 @@ User = get_user_model()
 
 
 def ensure_placeholder_photo(user, initials="ID", size=320, color=(30, 55, 85)):
-    """Ne plus générer de JPEG seed — avatar initiales premium côté client.
+    """Ne plus générer de JPEG seed - avatar initiales premium côté client.
 
     Nettoie les anciennes photos seed_* encore en base.
     """
@@ -64,7 +64,7 @@ Réceptionnistes
   reception  / mdp123
   reception2 / mdp123
 
-Patients (DotoPlus) — téléphone + OTP (mock 00000)
+Patients (DotoPlus) - téléphone + OTP (mock 00000)
   +229 97 45 12 88 · NPI 1200478821 (identification Hub, pas login)
   +229 97 11 22 33 · NPI 1200112233
   +229 96 55 44 33 · NPI 1200998877
@@ -354,7 +354,7 @@ class Command(BaseCommand):
                 medecin=medecin,
                 date=timezone.make_aware(datetime(2025, 6, 12, 9, 0)),
                 type=Consultation.Type.CONSULTATION,
-                diagnostic="Tension artérielle — HTA confirmée",
+                diagnostic="Tension artérielle - HTA confirmée",
                 notes="PA 155/95 mmHg. Amlodipine 5 mg. Contrôle dans 3 semaines.",
             )
             Consultation.objects.create(
@@ -363,7 +363,7 @@ class Command(BaseCommand):
                 medecin=medecin,
                 date=timezone.make_aware(datetime(2025, 4, 3, 10, 30)),
                 type=Consultation.Type.CONSULTATION,
-                diagnostic="Suivi diabète type 2 — glycémie stable",
+                diagnostic="Suivi diabète type 2 - glycémie stable",
                 notes="HbA1c 7.2%. Metformine 500 mg maintenue.",
             )
             Consultation.objects.create(
@@ -372,7 +372,7 @@ class Command(BaseCommand):
                 medecin=medecin,
                 date=timezone.make_aware(datetime(2025, 1, 15, 8, 0)),
                 type=Consultation.Type.HOSPITALISATION,
-                diagnostic="Hospitalisation — appendicite aiguë",
+                diagnostic="Hospitalisation - appendicite aiguë",
                 notes="Appendicectomie laparoscopique. Sortie le 18/01.",
             )
 
@@ -490,20 +490,20 @@ class Command(BaseCommand):
                 statut=Appointment.Statut.TERMINE,
             )
 
-        # Exemple de blocage (patient principal bloque ambulancier3 — démo blacklist)
+        # Exemple de blocage (patient principal bloque ambulancier3 - démo blacklist)
         AccessBlock.objects.update_or_create(
             patient=patient,
             blocked_user=created_users["ambulancier3"],
             blocked_structure=None,
             defaults=dict(
-                reason="Démo — accès bloqué définitivement",
+                reason="Démo - accès bloqué définitivement",
                 active=True,
             ),
         )
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"Données prêtes — {n_pros} pros, {n_patients} patients, {n_cards} DotoCards actives.\n\n"
+                f"Données prêtes - {n_pros} pros, {n_patients} patients, {n_cards} DotoCards actives.\n\n"
                 f"{CREDENTIALS_NOTE}"
             )
         )

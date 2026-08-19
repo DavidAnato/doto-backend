@@ -121,7 +121,7 @@ def notify_patient_dossier_change(
             type=notif_type,
             payload=data,
         )
-        # Event typé en plus de « notification » — invalidations ciblées côté client
+        # Event typé en plus de « notification » - invalidations ciblées côté client
         hub_bus.publish(
             user.id,
             {
@@ -295,7 +295,7 @@ def publish_insurance_updated(
     assurance=None,
     notify_patient: bool = True,
 ):
-    """SSE assurance (ajout / MAJ / retrait) — patient + pros + admins."""
+    """SSE assurance (ajout / MAJ / retrait) - patient + pros + admins."""
     data = insurance_sse_payload(patient, kind=kind, assurance=assurance)
     event = {
         "type": "insurance_updated",

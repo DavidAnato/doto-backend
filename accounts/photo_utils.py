@@ -18,7 +18,7 @@ def public_api_base() -> str:
 
 
 def _is_seed_placeholder(file_field) -> bool:
-    """Photos générées par seed_demo — on préfère les initiales côté client."""
+    """Photos générées par seed_demo - on préfère les initiales côté client."""
     if not file_field:
         return False
     name = (getattr(file_field, "name", None) or "").replace("\\", "/")
@@ -68,7 +68,7 @@ def user_photo_url(user, request=None) -> str | None:
 
 
 def clear_seed_photo(user) -> bool:
-    """Retire une photo seed_* (placeholders hideux) — le client affiche les initiales."""
+    """Retire une photo seed_* (placeholders hideux) - le client affiche les initiales."""
     photo = getattr(user, "photo", None)
     if not photo or not _is_seed_placeholder(photo):
         return False
@@ -94,7 +94,7 @@ def patient_photo_url(patient, request=None) -> str | None:
 def validate_identity_photo(uploaded) -> None:
     """
     Photo d'identité : JPEG/PNG/WebP, max 5 Mo, min 200×200.
-    Pas de détection de visage IA — contraintes techniques seulement.
+    Pas de détection de visage IA - contraintes techniques seulement.
     """
     if uploaded is None:
         raise ValidationError("Fichier photo requis.")

@@ -85,7 +85,7 @@ def patient_payload(user, request=None):
 
 
 def _pin_target(user):
-    """Retourne (owner, kind) — Patient pour patients, User pour pros."""
+    """Retourne (owner, kind) - Patient pour patients, User pour pros."""
     patient = getattr(user, "patient", None)
     if user.role == Roles.PATIENT and patient is not None:
         return patient, "patient"
@@ -123,7 +123,7 @@ class RequestOtpView(APIView):
         if purpose in ("login", "password_change", "password_reset"):
             exists = bool(find_patient_user(phone))
             if not exists:
-                # Message générique — pas de fuite d'existence
+                # Message générique - pas de fuite d'existence
                 return Response(
                     {"detail": "Si le compte existe, un OTP a été envoyé.", "sent": True, "purpose": purpose}
                 )
@@ -143,7 +143,7 @@ class RequestOtpView(APIView):
             "provider": settings.SMS_PROVIDER,
         }
         if settings.SMS_PROVIDER == "mock":
-            resp["hint"] = f"Mode mock — utilisez le code {settings.DEMO_OTP_CODE}"
+            resp["hint"] = f"Mode mock - utilisez le code {settings.DEMO_OTP_CODE}"
         return Response(resp)
 
 
@@ -235,7 +235,7 @@ class PatientLoginView(APIView):
 
 
 class PatientRegisterView(APIView):
-    """Inscription patient — téléphone + OTP puis profil (pas de mot de passe)."""
+    """Inscription patient - téléphone + OTP puis profil (pas de mot de passe)."""
 
     permission_classes = [AllowAny]
 
@@ -309,7 +309,7 @@ class PatientRegisterView(APIView):
 
 
 class IdCardOcrView(APIView):
-    """OCR CIP / carte CEDEAO — public (inscription)."""
+    """OCR CIP / carte CEDEAO - public (inscription)."""
 
     permission_classes = [AllowAny]
     parser_classes = [MultiPartParser, FormParser]
@@ -376,7 +376,7 @@ class IdCardOcrView(APIView):
 
 
 class PatientPasswordChangeView(APIView):
-    """Legacy — changement MDP patient via OTP (comptes sans MDP : no-op utile)."""
+    """Legacy - changement MDP patient via OTP (comptes sans MDP : no-op utile)."""
 
     permission_classes = [AllowAny]
 
@@ -446,7 +446,7 @@ class PatientPinLoginView(APIView):
 
 
 class SetPinView(APIView):
-    """Définit / change le PIN (patient ou pro) — 4 chiffres, hashé."""
+    """Définit / change le PIN (patient ou pro) - 4 chiffres, hashé."""
 
     permission_classes = [IsAuthenticated]
 
@@ -482,7 +482,7 @@ class SetPinView(APIView):
 
 
 class VerifyPinView(APIView):
-    """Vérifie le PIN de session (déverrouillage) — JWT déjà actif."""
+    """Vérifie le PIN de session (déverrouillage) - JWT déjà actif."""
 
     permission_classes = [IsAuthenticated]
 
@@ -517,7 +517,7 @@ class VerifyPinView(APIView):
 
 
 class MeView(APIView):
-    """Profil courant — GET + PATCH (nom, téléphone, email, flags sécurité patient)."""
+    """Profil courant - GET + PATCH (nom, téléphone, email, flags sécurité patient)."""
 
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
@@ -563,10 +563,33 @@ class MeView(APIView):
             if user.structure_principale_id and user.structure_principale_id not in {
                 s.pk for s in ids
             }:
-                # principal doit rester dans la liste rattachée
                 if ids:
                     user.structure_principale = ids[0]
                     user.save(update_fields=["structure_principale"])
+            # Sync affiliations from catalogue picks
+            from .models import AffiliationPro
+
+            kind = data.get("type_exercice") or user.type_exercice or AffiliationPro.Kind.ETABLISSEMENT
+            principale_id = user.structure_principale_id
+            for struct in ids:
+                AffiliationPro.objects.update_or_create(
+                    user=user,
+                    structure=struct,
+                    defaults={
+                        "nom_etablissement": struct.nom,
+                        "kind": kind if kind in dict(AffiliationPro.Kind.choices) else AffiliationPro.Kind.ETABLISSEMENT,
+                        "ville": data.get("ville_exercice") or user.ville_exercice or struct.commune or "",
+                        "numero_autorisation": data.get("numero_autorisation") or user.numero_autorisation or "",
+                        "numero_ordre": data.get("numero_ordre") or user.numero_ordre or "",
+                        "email_pro": data.get("email_pro") or user.email_pro or "",
+                        "ligne_pro": data.get("ligne_pro") or user.ligne_pro or "",
+                        "principal": struct.pk == principale_id,
+                        "statut": AffiliationPro.Statut.EN_ATTENTE,
+                    },
+                )
+        from .kyc_views import apply_pro_profile
+
+        apply_pro_profile(user, data)
 
         patient = getattr(user, "patient", None)
         if patient is not None:
@@ -598,7 +621,7 @@ class MeView(APIView):
 
 
 class MePhotoView(APIView):
-    """Upload photo d'identité (multipart) — tous types de compte."""
+    """Upload photo d'identité (multipart) - tous types de compte."""
 
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
@@ -695,7 +718,7 @@ class HospitalCatalogView(APIView):
 
 
 class ContractsView(APIView):
-    """Contrats figés (PIN/OTP/spécialités/routing notifs) — public authentifié."""
+    """Contrats figés (PIN/OTP/spécialités/routing notifs) - public authentifié."""
 
     permission_classes = [IsAuthenticated]
 
@@ -706,9 +729,9 @@ class ContractsView(APIView):
 
 
 class UserViewSet(viewsets.ModelViewSet):
-    """Gestion des comptes professionnels — réservé aux admins (CDC §3.5)."""
+    """Gestion des comptes professionnels - réservé aux admins (CDC §3.5)."""
 
-    queryset = User.objects.all().prefetch_related("structures")
+    queryset = User.objects.all().prefetch_related("structures", "affiliations").select_related("structure_principale", "kyc")
     permission_classes = [IsAdmin]
     search_fields = ["username", "first_name", "last_name", "email"]
     filterset_fields = ["role", "actif"]

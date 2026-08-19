@@ -232,7 +232,7 @@ def create_access_request(
             dodocard=dodocard,
             status=AccessRequest.Status.EMERGENCY_BYPASS,
             mode=AccessRequest.Mode.EMERGENCY,
-            reason=reason or "Accès urgence — consentement non requis",
+            reason=reason or "Accès urgence - consentement non requis",
             scope="urgence",
             expires_at=now,
             responded_at=now,
@@ -256,7 +256,7 @@ def create_access_request(
                 body=(
                     f"{_requester_name(requester)} ({_role_label(requester)}) "
                     f"a ouvert votre dossier en mode urgence"
-                    + (f" — {_structure_name(requester)}" if _structure_name(requester) else "")
+                    + (f" - {_structure_name(requester)}" if _structure_name(requester) else "")
                     + ". Le consentement n'est pas requis en situation vitale."
                 ),
                 type=Notification.Type.EMERGENCY,
@@ -282,7 +282,7 @@ def create_access_request(
         notify_user(
             requester,
             title="Accès urgence accordé",
-            body=f"Dossier {patient.full_name} — bypass consentement (urgence).",
+            body=f"Dossier {patient.full_name} - bypass consentement (urgence).",
             type=Notification.Type.EMERGENCY,
             payload={"access_request_id": req.id, "patient_id": patient.id, "emergency": True},
             push=False,
@@ -339,7 +339,7 @@ def create_access_request(
             title="Demande d'accès à votre dossier",
             body=(
                 f"{payload['requester_name']} ({payload['requester_role_label']})"
-                + (f" — {payload['structure']}" if payload["structure"] else "")
+                + (f" - {payload['structure']}" if payload["structure"] else "")
                 + f" {intent}. Confirmez ou refusez."
             ),
             type=Notification.Type.ACCESS_REQUEST,

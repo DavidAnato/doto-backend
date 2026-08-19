@@ -29,7 +29,7 @@ def _reload_appt(pk):
 
 class AppointmentViewSet(viewsets.ModelViewSet):
     """
-    Patient : ses RDV (lecture + annulation uniquement — pas de création).
+    Patient : ses RDV (lecture + annulation uniquement - pas de création).
     Médecin / réceptionniste / admin : agenda structure + création (role_can_write).
     Infirmier : lecture agenda si section rdv.
 
@@ -187,7 +187,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 body=(
                     f"{user.get_full_name() or user.username} a planifié un RDV "
                     f"avec {appt.patient.full_name} le {when}"
-                    + (f" — {appt.motif}" if appt.motif else "")
+                    + (f" - {appt.motif}" if appt.motif else "")
                     + ". Confirmez ou refusez dans l'agenda."
                 ),
                 type=Notification.Type.APPOINTMENT,
@@ -206,7 +206,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             actor=user,
             kind="rdv_created",
             title="Nouveau rendez-vous",
-            body=f"RDV prévu le {when} — {struct}"
+            body=f"RDV prévu le {when} - {struct}"
             + (f" ({appt.motif})" if appt.motif else "")
             + ".",
         )

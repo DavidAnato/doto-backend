@@ -43,6 +43,7 @@ def _filter_patient_payload(data: dict, role: str) -> dict:
             "historique": role_can_write(role, "historique"),
             "ordonnances": role_can_write(role, "ordonnances"),
             "dispenser": role_can_write(role, "dispenser"),
+            "payer": role_can_write(role, "dispenser"),
             "examens": role_can_write(role, "examens"),
             "constantes": role_can_write(role, "constantes"),
             "assurance": role_can_write(role, "assurance"),
@@ -155,7 +156,7 @@ class PatientViewSet(viewsets.ModelViewSet):
                     "required": False,
                     "granted": True,
                     "emergency": True,
-                    "message": "Accès urgence — consentement patient non requis.",
+                    "message": "Accès urgence - consentement patient non requis.",
                 }
                 return Response(data)
 
@@ -522,6 +523,7 @@ class MonDossierView(viewsets.ViewSet):
         if patient is None:
             return Response({"detail": "Aucun dossier."}, status=status.HTTP_404_NOT_FOUND)
         from medical.serializers import (
+            BonExamenSerializer,
             ConsultationSerializer,
             ExamenSerializer,
             OrdonnanceSerializer,
@@ -540,7 +542,14 @@ class MonDossierView(viewsets.ViewSet):
                     many=True,
                 ).data,
                 "examens": ExamenSerializer(
-                    patient.examens.all()[:50],
+                    patient.examens.filter(annule=False)[:50],
+                    many=True,
+                    context={"request": request},
+                ).data,
+                "bons_examen": BonExamenSerializer(
+                    patient.bons_examen.select_related("medecin", "structure", "laboratoire")
+                    .prefetch_related("lignes", "resultats")
+                    .all()[:50],
                     many=True,
                     context={"request": request},
                 ).data,

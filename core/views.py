@@ -7,7 +7,7 @@ from rest_framework.response import Response
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    """Sonde de disponibilité (CDC §7 — 99,5% uptime)."""
+    """Sonde de disponibilité (CDC §7 - 99,5% uptime)."""
     payload = {
         "status": "ok",
         "service": "doto-backend",

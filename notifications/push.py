@@ -1,4 +1,4 @@
-"""Envoi push Expo — stub en DEV, réel si EXPO_ACCESS_TOKEN est défini."""
+"""Envoi push Expo - stub en DEV, réel si EXPO_ACCESS_TOKEN est défini."""
 from __future__ import annotations
 
 import json

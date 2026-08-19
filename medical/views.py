@@ -195,7 +195,7 @@ class OrdonnanceViewSet(PatientScopedMixin, viewsets.ModelViewSet):
     serializer_class = OrdonnanceSerializer
     permission_classes = [RoleOrPatientRead]
     write_roles = (Roles.MEDECIN, Roles.ADMIN)
-    filterset_fields = ["patient", "statut"]
+    filterset_fields = ["patient"]
 
     def get_permissions(self):
         if self.action in ("dispenser", "annuler", "annuler_dispense"):
@@ -216,9 +216,15 @@ class OrdonnanceViewSet(PatientScopedMixin, viewsets.ModelViewSet):
             .all()
         )
         user = self.request.user
+        statut = self.request.query_params.get("statut")
         if getattr(user, "role", None) == Roles.PATIENT:
             patient = getattr(user, "patient", None)
-            return qs.filter(patient=patient) if patient else qs.none()
+            qs = qs.filter(patient=patient) if patient else qs.none()
+            if statut in ("payee", "dispensee", "dispense"):
+                qs = qs.filter(statut__in=["payee", "dispensee"])
+            elif statut:
+                qs = qs.filter(statut=statut)
+            return qs
 
         _assert_section_read(user, "ordonnances")
         patient_id = self.request.query_params.get("patient")
@@ -227,8 +233,9 @@ class OrdonnanceViewSet(PatientScopedMixin, viewsets.ModelViewSet):
                 _assert_patient_consent(self.request, patient_id)
             qs = qs.filter(patient_id=patient_id)
         elif user.role == Roles.PHARMACIEN and self.action == "list":
-            # Pas de file globale ni par structure du médecin.
             qs = qs.none()
+        if statut in ("payee", "dispensee", "dispense"):
+            qs = qs.filter(statut__in=["payee", "dispensee"])
         return qs
 
     def perform_create(self, serializer):
@@ -253,7 +260,7 @@ class OrdonnanceViewSet(PatientScopedMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def dispenser(self, request, pk=None):
-        """Marquer une ordonnance comme dispensée — pharmacien (CDC §3.5, §5.5)."""
+        """Marquer une ordonnance comme payée (pharmacien). URL historique /dispenser/."""
         if request.user.role not in (Roles.PHARMACIEN, Roles.ADMIN):
             return Response(
                 {"detail": "Réservé au pharmacien."}, status=status.HTTP_403_FORBIDDEN
@@ -261,27 +268,27 @@ class OrdonnanceViewSet(PatientScopedMixin, viewsets.ModelViewSet):
         ordonnance = self.get_object()
         if ordonnance.statut == Ordonnance.Statut.ANNULEE:
             return Response(
-                {"detail": "Ordonnance annulée — impossible de dispenser."},
+                {"detail": "Ordonnance annulée, impossible de marquer payée."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if ordonnance.statut == Ordonnance.Statut.DISPENSEE:
+        if ordonnance.statut in Ordonnance.PAID_VALUES:
             return Response(
-                {"detail": "Déjà dispensée."}, status=status.HTTP_400_BAD_REQUEST
+                {"detail": "Déjà payée."}, status=status.HTTP_400_BAD_REQUEST
             )
-        ordonnance.statut = Ordonnance.Statut.DISPENSEE
+        ordonnance.statut = Ordonnance.Statut.PAYEE
         ordonnance.dispensee_le = timezone.now()
         ordonnance.dispensee_par = request.user
         ordonnance.save(update_fields=["statut", "dispensee_le", "dispensee_par"])
-        log_action(request, "dispenser_ordonnance", target=f"ordonnance:{pk}",
+        log_action(request, "payer_ordonnance", target=f"ordonnance:{pk}",
                    patient_npi=ordonnance.patient.npi)
         notify_patient_dossier_change(
             ordonnance.patient,
-            title="Ordonnance dispensée",
-            body="Votre ordonnance a été délivrée en pharmacie.",
+            title="Ordonnance payée",
+            body="Votre ordonnance a été payée en pharmacie.",
             notif_type=Notification.Type.ORDONNANCE,
             event_type="ordonnance",
             section="ordonnances",
-            payload={"kind": "ordonnance_dispensee", "ordonnance_id": ordonnance.id},
+            payload={"kind": "ordonnance_payee", "ordonnance_id": ordonnance.id},
             actor=request.user,
         )
         return Response(OrdonnanceSerializer(ordonnance).data)
@@ -325,9 +332,9 @@ class OrdonnanceViewSet(PatientScopedMixin, viewsets.ModelViewSet):
                 {"detail": "Réservé au pharmacien."}, status=status.HTTP_403_FORBIDDEN
             )
         ordonnance = self.get_object()
-        if ordonnance.statut != Ordonnance.Statut.DISPENSEE:
+        if ordonnance.statut not in Ordonnance.PAID_VALUES:
             return Response(
-                {"detail": "Seule une ordonnance dispensée peut être réouverte."},
+                {"detail": "Seule une ordonnance payée peut être réouverte."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if (
@@ -570,7 +577,7 @@ class BonExamenViewSet(PatientScopedMixin, viewsets.ModelViewSet):
                 notify_user(
                     lab,
                     title="Nouveau bon d'examen",
-                    body=f"{bon.patient.full_name} — {bon.lignes.count()} examen(s).",
+                    body=f"{bon.patient.full_name} - {bon.lignes.count()} examen(s).",
                     type=Notification.Type.BON_EXAMEN,
                     payload={
                         "kind": "bon_examen",

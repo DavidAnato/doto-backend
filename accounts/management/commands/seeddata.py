@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand
 class Command(BaseCommand):
     help = (
         "Charge les données de démonstration (structures, pros, patients, dossier médical). "
-        "Alias de seed_demo — prévu pour le build / shell Render."
+        "Alias de seed_demo - prévu pour le build / shell Render."
     )
 
     def add_arguments(self, parser):

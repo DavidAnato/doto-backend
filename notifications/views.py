@@ -32,7 +32,7 @@ def _authenticate_access_token(raw: str):
 
 
 class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
-    """Liste / détail / marquage lu — pour patient, pro et admin."""
+    """Liste / détail / marquage lu - pour patient, pro et admin."""
 
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]

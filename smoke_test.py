@@ -1,4 +1,4 @@
-"""Test de fumée étendu — auth sans OTP pro, OTP inscription/reset, PIN, DotoCard, RBAC."""
+"""Test de fumée étendu - auth sans OTP pro, OTP inscription/reset, PIN, DotoCard, RBAC."""
 import io
 import json
 import os
@@ -43,7 +43,7 @@ show("health", c.get("/api/health/"))
 H = login_pro("medecin", "Medecin123!")
 print("login medecin (sans OTP): 200 OK")
 
-# OTP pour login / inscription patient — numéro unique à chaque run
+# OTP pour login / inscription patient - numéro unique à chaque run
 import time
 
 demo_phone = f"+229 90 {int(time.time()) % 10000000:07d}"
@@ -143,12 +143,12 @@ if scan_body.get("consent_required"):
     arid0 = scan_body["access_request"]["id"]
     show("patient approve initial scan", c.post(f"/api/access-requests/{arid0}/approve/", **pH))
 
-# SSE hub — auth requise (ne pas ouvrir le stream infini dans le smoke)
+# SSE hub - auth requise (ne pas ouvrir le stream infini dans le smoke)
 assert c.get("/api/hub/events/").status_code == 401
 assert c.get("/api/hub/events/?access=invalid").status_code == 401
 print("hub SSE auth gates: OK")
 
-# Suite patient — PIN 4 chiffres (déverrouillage secondaire + verify)
+# Suite patient - PIN 4 chiffres (déverrouillage secondaire + verify)
 show(
     "pin unlock (secondary)",
     c.post(
@@ -213,7 +213,7 @@ show(
     c.post(f"/api/examens/{eid}/upload/", data={"fichier": pdf}, **lH),
 )
 
-# RBAC — ambulancier : urgence + constantes OK, historique / ordo refusés
+# RBAC - ambulancier : urgence + constantes OK, historique / ordo refusés
 aH = login_pro("ambulancier", "Ambulancier123!")
 dossier_a = show("ambulancier dossier", c.get(f"/api/patients/{pid}/", **aH)).json()
 assert "urgence" in dossier_a
@@ -225,7 +225,7 @@ r_histo = c.get(f"/api/consultations/?patient={pid}", **aH)
 assert r_histo.status_code == 403, r_histo.content
 print("ambulancier RBAC: OK")
 
-# RBAC — pharmacien : consentement puis ordo OK, consultations refusées
+# RBAC - pharmacien : consentement puis ordo OK, consultations refusées
 phH = login_pro("pharmacien", "Pharma123!")
 req_ph = show(
     "pharmacien request access",
@@ -247,7 +247,7 @@ assert c.get(f"/api/consultations/?patient={pid}", **phH).status_code == 403
 show("pharmacien ordo", c.get(f"/api/ordonnances/?patient={pid}", **phH))
 print("pharmacien RBAC: OK")
 
-# RBAC — réceptionniste : assurance, pas d'historique
+# RBAC - réceptionniste : assurance, pas d'historique
 rH = login_pro("reception", "Reception123!")
 req_r = show(
     "reception request access",
@@ -277,7 +277,7 @@ assert scan_a.json().get("patient_id")
 assert scan_a.json().get("emergency") is True or scan_a.json().get("consent_required") is False
 print("ambulancier urgency bypass: OK")
 
-# Consentement — médecin scan → pending ; patient approuve
+# Consentement - médecin scan → pending ; patient approuve
 from patients.models import AccessRequest as AR
 
 H2 = login_pro("medecin3", "Medecin123!")
@@ -603,7 +603,7 @@ show(
 )
 print("admin force revoke: OK")
 
-# Role write gates — infirmier peut constantes, pas ordo create
+# Role write gates - infirmier peut constantes, pas ordo create
 iH = login_pro("infirmier", "Infirmier123!")
 req_i = c.post(
     "/api/access-requests/create/",

@@ -58,7 +58,7 @@ def normalize_phone(raw: str) -> str:
     return f"+{BJ_CC}{nat}"
 
 
-def display_phone(raw: str, fallback: str = "—") -> str:
+def display_phone(raw: str, fallback: str = "-") -> str:
     """Affichage carte / PDF : +229 01 XX XX XX XX."""
     nat = national_digits(raw)
     if not nat:

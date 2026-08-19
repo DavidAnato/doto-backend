@@ -55,7 +55,7 @@ class ConsultationSerializer(serializers.ModelSerializer):
             parts.append(struct)
         if date_s:
             parts.append(date_s)
-        return " — ".join(parts)
+        return " - ".join(parts)
 
 
 class MedicamentSerializer(serializers.ModelSerializer):
@@ -96,6 +96,16 @@ class OrdonnanceSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
         read_only_fields = ["medecin", "structure", "alertes_interactions", "dispensee_le", "updated_at"]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        raw = data.get("statut")
+        if raw in ("dispensee", "dispense"):
+            data["statut"] = "payee"
+            data["statut_label"] = "Payé"
+        elif raw == "payee":
+            data["statut_label"] = "Payé"
+        return data
 
     def create(self, validated_data):
         medicaments = validated_data.pop("medicaments", [])

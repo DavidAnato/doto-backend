@@ -1,11 +1,11 @@
 """
-OCR CIP / CEDEAO — Tesseract (Render) + fallback RapidOCR/Paddle optionnels.
+OCR CIP / CEDEAO - Tesseract (Render) + fallback RapidOCR/Paddle optionnels.
 
 CIP  : valeur à droite du libellé
 CEDEAO : valeur sous le libellé (sauf NPI / dates parfois à droite)
 
 Sur Render (512 Mo) : Tesseract via apt (`tesseract-ocr`, `tesseract-ocr-fra`,
-`tesseract-ocr-eng`). RapidOCR/Paddle trop lourds — ne pas les forcer en prod.
+`tesseract-ocr-eng`). RapidOCR/Paddle trop lourds - ne pas les forcer en prod.
 """
 from __future__ import annotations
 
@@ -255,7 +255,7 @@ def _items_from_paddle(image_path: str) -> list[dict[str, Any]]:
 
 
 def _prepare_ocr_image(image_bytes: bytes) -> Image.Image:
-    """RGB, orientation EXIF, taille bornée — photos mobile trop grandes = timeout."""
+    """RGB, orientation EXIF, taille bornée - photos mobile trop grandes = timeout."""
     img = Image.open(io.BytesIO(image_bytes))
     img = ImageOps.exif_transpose(img) or img
     img = img.convert("RGB")
@@ -308,7 +308,7 @@ def _configure_tesseract() -> str:
 
     prefix = (os.environ.get("TESSDATA_PREFIX") or "").strip()
     if prefix and not Path(prefix).is_dir():
-        logger.warning("TESSDATA_PREFIX invalide (%s) — détection auto", prefix)
+        logger.warning("TESSDATA_PREFIX invalide (%s) - détection auto", prefix)
         prefix = ""
     if not prefix:
         for cand in _TESSDATA_CANDIDATES:
@@ -431,7 +431,7 @@ def _items_from_tesseract(image_bytes: bytes) -> list[dict[str, Any]]:
 
 @lru_cache(maxsize=1)
 def ocr_engine_status() -> dict[str, Any]:
-    """Sonde légère pour /api/health/ — pas d'OCR d'image."""
+    """Sonde légère pour /api/health/ - pas d'OCR d'image."""
     status: dict[str, Any] = {
         "engine": os.environ.get("DOTO_OCR_ENGINE", "tesseract"),
         "available": False,
@@ -511,7 +511,7 @@ def read_items(image_bytes: bytes) -> tuple[list[dict[str, Any]], str]:
     """Retourne (items spatiaux, moteur).
 
     Défaut : Tesseract (léger, viable Render 512 Mo). RapidOCR / Paddle seulement
-    si installés et DOTO_OCR_ENGINE=rapid|paddle|auto — trop lourds pour le free.
+    si installés et DOTO_OCR_ENGINE=rapid|paddle|auto - trop lourds pour le free.
     """
     errors: list[str] = []
     engine_pref = os.environ.get("DOTO_OCR_ENGINE", "tesseract").lower().strip()
@@ -649,7 +649,7 @@ def _value_after_bilingual_label(text: str) -> str:
 
 
 def right_value(items: list[dict], *keywords: str, max_gap: float | None = None) -> str:
-    """Valeur à droite du libellé (même ligne Y) — layout CIP."""
+    """Valeur à droite du libellé (même ligne Y) - layout CIP."""
     label = _find_label(items, *keywords)
     if not label:
         return ""
@@ -687,7 +687,7 @@ def right_value(items: list[dict], *keywords: str, max_gap: float | None = None)
         # le lieu de naissance (c'est la valeur).
         if otc.startswith(("com", "qt", "arr")) and ":" in other["text"]:
             if "naissance" not in label_c and "nationalite" not in label_c:
-                # C'est un bloc adresse autonome — pas une valeur « à droite »
+                # C'est un bloc adresse autonome - pas une valeur « à droite »
                 # sauf si on cherche précisément Com/Qt/Arr
                 if not any(k in label_c for k in ("com", "qt", "arr", "lieu")):
                     continue
@@ -708,7 +708,7 @@ def right_value(items: list[dict], *keywords: str, max_gap: float | None = None)
 
 
 def below_value(items: list[dict], *keywords: str, x_tol: float | None = None) -> str:
-    """Valeur sous le libellé — layout CEDEAO."""
+    """Valeur sous le libellé - layout CEDEAO."""
     label = _find_label(items, *keywords)
     if not label:
         return ""
@@ -897,7 +897,7 @@ def _npi_from_items(items: list[dict]) -> str:
                 for cand in _extract_n_digit_runs(other["text"], 10):
                     return cand
 
-    # 3) Blocs exactement 10 chiffres (exclure sous-chaînes d'un n° certificat 12–16)
+    # 3) Blocs exactement 10 chiffres (exclure sous-chaînes d'un n° certificat 12-16)
     cert_subs: set[str] = set()
     for item in items:
         raw = re.sub(r"\D", "", _ocr_fix_digits(item["text"]))

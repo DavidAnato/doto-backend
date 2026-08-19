@@ -20,10 +20,21 @@ from .views import (
     UserViewSet,
     VerifyPinView,
 )
+from .kyc_views import (
+    AdminAffiliationViewSet,
+    AdminKycViewSet,
+    MyAffiliationViewSet,
+    MyKycSubmitView,
+    MyKycUploadView,
+    MyKycView,
+)
 
 router = DefaultRouter()
 router.register("users", UserViewSet, basename="user")
 router.register("structures", StructureSanteViewSet, basename="structure")
+router.register("kyc", AdminKycViewSet, basename="kyc-admin")
+router.register("affiliations", AdminAffiliationViewSet, basename="affiliation-admin")
+router.register("me/affiliations", MyAffiliationViewSet, basename="my-affiliation")
 
 urlpatterns = [
     path("otp/", RequestOtpView.as_view(), name="request-otp"),
@@ -40,6 +51,9 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(), name="logout"),
     path("me/", MeView.as_view(), name="me"),
     path("me/photo/", MePhotoView.as_view(), name="me-photo"),
+    path("kyc/me/", MyKycView.as_view(), name="kyc-me"),
+    path("kyc/me/submit/", MyKycSubmitView.as_view(), name="kyc-me-submit"),
+    path("kyc/me/upload/<str:kind>/", MyKycUploadView.as_view(), name="kyc-me-upload"),
     path("hospitals/", HospitalCatalogView.as_view(), name="hospital-catalog"),
     path("contracts/", ContractsView.as_view(), name="api-contracts"),
     path("", include(router.urls)),

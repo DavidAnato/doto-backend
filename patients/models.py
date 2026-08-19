@@ -51,7 +51,7 @@ class Patient(models.Model):
     sexe = models.CharField(
         max_length=1, choices=[("M", "Masculin"), ("F", "Féminin")], blank=True
     )
-    # Verso DotoCard — filiation & adresse de résidence
+    # Verso DotoCard - filiation & adresse de résidence
     nom_pere = models.CharField("Nom du père", max_length=120, blank=True)
     nom_mere = models.CharField("Nom de la mère", max_length=120, blank=True)
     adresse_commune = models.CharField("Commune", max_length=120, blank=True)
@@ -59,7 +59,7 @@ class Patient(models.Model):
     groupe_sanguin = models.CharField(
         max_length=20, choices=GroupeSanguin.choices, blank=True
     )
-    # Électrophorèse de l'hémoglobine — choix connus ou texte libre (ex. « Non identifié »).
+    # Électrophorèse de l'hémoglobine - choix connus ou texte libre (ex. « Non identifié »).
     electrophorese = models.CharField(
         "Électrophorèse Hb",
         max_length=40,
@@ -71,12 +71,12 @@ class Patient(models.Model):
     telephone = models.CharField(max_length=30, blank=True)
     email = models.EmailField(blank=True)
 
-    # PIN 4 chiffres pour déverrouillage app (optionnel) — hashé (jamais en clair).
+    # PIN 4 chiffres pour déverrouillage app (optionnel) - hashé (jamais en clair).
     pin_hash = models.CharField(max_length=128, blank=True)
     failed_pin_attempts = models.PositiveIntegerField(default=0)
     pin_locked_until = models.DateTimeField(null=True, blank=True)
 
-    # Verrouillage session (paramètres patient — sync via PATCH me)
+    # Verrouillage session (paramètres patient - sync via PATCH me)
     require_unlock = models.BooleanField(
         "Exiger déverrouillage",
         default=False,
@@ -102,7 +102,7 @@ class Patient(models.Model):
         ordering = ["nom", "prenom"]
 
     def __str__(self):
-        return f"{self.nom} {self.prenom} — {self.npi}"
+        return f"{self.nom} {self.prenom} - {self.npi}"
 
     @property
     def full_name(self):
@@ -135,7 +135,7 @@ class DossierMedical(models.Model):
         Patient, on_delete=models.CASCADE, related_name="dossier"
     )
     antecedents = models.TextField(blank=True)
-    # Allergies critiques (pills rouges) — liste de libellés.
+    # Allergies critiques (pills rouges) - liste de libellés.
     allergies = models.JSONField(default=list, blank=True)
     # Maladies chroniques (pills ambrées) : [{"nom": "...", "depuis": "2019"}]
     maladies_chroniques = models.JSONField(default=list, blank=True)
@@ -146,7 +146,7 @@ class DossierMedical(models.Model):
         verbose_name_plural = "Dossiers médicaux"
 
     def __str__(self):
-        return f"Dossier — {self.patient.full_name}"
+        return f"Dossier - {self.patient.full_name}"
 
 
 class Assurance(models.Model):
@@ -169,7 +169,7 @@ class Assurance(models.Model):
         verbose_name_plural = "Assurances"
 
     def __str__(self):
-        return f"{self.assureur} — {self.num_police}"
+        return f"{self.assureur} - {self.num_police}"
 
     @staticmethod
     def garanties_par_defaut():
@@ -185,7 +185,7 @@ class Assurance(models.Model):
 
 
 class AccessRequest(models.Model):
-    """Demande d'accès dossier — consentement patient (sauf urgence)."""
+    """Demande d'accès dossier - consentement patient (sauf urgence)."""
 
     class Status(models.TextChoices):
         PENDING = "pending", "En attente"
@@ -329,13 +329,13 @@ class Appointment(models.Model):
         ]
 
     def __str__(self):
-        return f"RDV {self.patient.full_name} — {self.debut:%d/%m/%Y %H:%M}"
+        return f"RDV {self.patient.full_name} - {self.debut:%d/%m/%Y %H:%M}"
 
 
 class AccessBlock(models.Model):
     """
     Blocage permanent (blacklist) d'un professionnel et/ou d'une structure
-    par le patient — empêche toute nouvelle demande d'accès.
+    par le patient - empêche toute nouvelle demande d'accès.
     """
 
     patient = models.ForeignKey(

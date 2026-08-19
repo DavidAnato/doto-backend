@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from core.contracts import PIN_ERROR, PIN_REGEX, OTP_ERROR, OTP_REGEX, HOSPITAL_REQUIRED_ROLES
 
-from .models import StructureSante
+from .models import AffiliationPro, KycDossier, StructureSante
 from .photo_utils import user_photo_url
 
 from django.contrib.auth import get_user_model
@@ -38,6 +38,8 @@ class UserSerializer(serializers.ModelSerializer):
     photo_url = serializers.SerializerMethodField()
     photo_required = serializers.SerializerMethodField()
     pin_set = serializers.BooleanField(source="has_pin", read_only=True)
+    affiliations = serializers.SerializerMethodField()
+    kyc = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -46,6 +48,9 @@ class UserSerializer(serializers.ModelSerializer):
             "email", "telephone", "role", "role_label", "actif",
             "is_locked", "structures", "structure_ids", "structure_principale",
             "specialite",
+            "type_exercice", "ville_exercice", "nom_etablissement",
+            "numero_autorisation", "numero_ordre", "email_pro", "ligne_pro",
+            "affiliations", "kyc",
             "photo_url", "photo_required", "pin_set", "date_joined",
         ]
         read_only_fields = ["is_locked", "date_joined", "photo_url", "photo_required", "pin_set"]
@@ -57,6 +62,18 @@ class UserSerializer(serializers.ModelSerializer):
     def get_photo_required(self, obj):
         request = self.context.get("request")
         return not bool(user_photo_url(obj, request=request))
+
+    def get_affiliations(self, obj):
+        qs = getattr(obj, "affiliations", None)
+        if qs is None:
+            return []
+        return AffiliationProSerializer(qs.all(), many=True, context=self.context).data
+
+    def get_kyc(self, obj):
+        kyc = getattr(obj, "kyc", None)
+        if kyc is None:
+            return None
+        return KycDossierSerializer(kyc, context=self.context).data
 
 
 class UserWriteSerializer(serializers.ModelSerializer):
@@ -72,6 +89,8 @@ class UserWriteSerializer(serializers.ModelSerializer):
             "id", "username", "first_name", "last_name", "email",
             "telephone", "role", "actif", "password",
             "structure_ids", "structure_principale", "specialite", "photo",
+            "type_exercice", "ville_exercice", "nom_etablissement",
+            "numero_autorisation", "numero_ordre", "email_pro", "ligne_pro",
         ]
 
     def validate(self, attrs):
@@ -80,14 +99,17 @@ class UserWriteSerializer(serializers.ModelSerializer):
         principale = attrs.get("structure_principale")
         creating = self.instance is None
         needs = role in HOSPITAL_REQUIRED_ROLES
-        if creating and needs:
+        type_ex = attrs.get("type_exercice") or getattr(self.instance, "type_exercice", "")
+        nom_etab = (attrs.get("nom_etablissement") or getattr(self.instance, "nom_etablissement", "") or "").strip()
+        independant = type_ex == "independant" and bool(nom_etab)
+        if creating and needs and not independant:
             if not structures:
                 raise serializers.ValidationError(
-                    {"structure_ids": "Choisissez au moins un hôpital."}
+                    {"structure_ids": "Choisissez au moins un établissement, ou indiquez un établissement libre (indépendant)."}
                 )
             if not principale:
                 raise serializers.ValidationError(
-                    {"structure_principale": "Désignez l'hôpital principal."}
+                    {"structure_principale": "Désignez l'établissement principal."}
                 )
         if principale and structures is not None:
             ids = [s.pk for s in structures]
@@ -136,6 +158,84 @@ class MeUpdateSerializer(serializers.Serializer):
     )
     require_unlock = serializers.BooleanField(required=False)
     urgence_when_locked = serializers.BooleanField(required=False)
+    type_exercice = serializers.CharField(required=False, allow_blank=True, max_length=32)
+    ville_exercice = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    nom_etablissement = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    numero_autorisation = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    numero_ordre = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    email_pro = serializers.EmailField(required=False, allow_blank=True)
+    ligne_pro = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    etablissement_libre = serializers.DictField(required=False)
+
+
+class AffiliationProSerializer(serializers.ModelSerializer):
+    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
+    statut_label = serializers.CharField(source="get_statut_display", read_only=True)
+    structure_nom = serializers.CharField(source="structure.nom", read_only=True, allow_null=True)
+
+    class Meta:
+        model = AffiliationPro
+        fields = [
+            "id", "user", "structure", "structure_nom", "nom_etablissement",
+            "kind", "kind_label", "ville", "numero_autorisation", "numero_ordre",
+            "email_pro", "ligne_pro", "principal", "statut", "statut_label",
+            "motif_refus", "created_at", "updated_at",
+        ]
+        read_only_fields = ["user", "statut", "motif_refus", "created_at", "updated_at"]
+
+
+class KycDossierSerializer(serializers.ModelSerializer):
+    statut_label = serializers.CharField(source="get_statut_display", read_only=True)
+    piece_recto_url = serializers.SerializerMethodField()
+    piece_verso_url = serializers.SerializerMethodField()
+    selfie_url = serializers.SerializerMethodField()
+    user_username = serializers.CharField(source="user.username", read_only=True)
+    user_role = serializers.CharField(source="user.role", read_only=True)
+
+    class Meta:
+        model = KycDossier
+        fields = [
+            "id", "user", "user_username", "user_role", "subject",
+            "statut", "statut_label", "motif_refus",
+            "piece_recto", "piece_verso", "selfie",
+            "piece_recto_url", "piece_verso_url", "selfie_url",
+            "nom", "prenom", "date_naissance", "lieu_naissance",
+            "npi", "telephone", "sexe", "ocr_payload",
+            "submitted_at", "reviewed_at", "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "user", "statut", "motif_refus", "piece_recto", "piece_verso", "selfie",
+            "submitted_at", "reviewed_at", "created_at", "updated_at",
+        ]
+
+    def _abs(self, f):
+        if not f:
+            return None
+        request = self.context.get("request")
+        url = f.url
+        if request:
+            return request.build_absolute_uri(url)
+        return url
+
+    def get_piece_recto_url(self, obj):
+        return self._abs(obj.piece_recto)
+
+    def get_piece_verso_url(self, obj):
+        return self._abs(obj.piece_verso)
+
+    def get_selfie_url(self, obj):
+        return self._abs(obj.selfie)
+
+
+class KycPatchSerializer(serializers.Serializer):
+    nom = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    prenom = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    date_naissance = serializers.DateField(required=False, allow_null=True)
+    lieu_naissance = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    npi = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    telephone = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    sexe = serializers.CharField(required=False, allow_blank=True, max_length=1)
+    ocr_payload = serializers.DictField(required=False)
 
 
 class ProLoginSerializer(serializers.Serializer):
@@ -173,7 +273,7 @@ class PatientLoginSerializer(serializers.Serializer):
 
 
 class PatientRegisterSerializer(serializers.Serializer):
-    """Inscription patient — téléphone + OTP (+ identité OCR). Pas de mot de passe."""
+    """Inscription patient - téléphone + OTP (+ identité OCR). Pas de mot de passe."""
 
     phone = serializers.CharField()
     otp = serializers.RegexField(
@@ -195,7 +295,7 @@ class PatientRegisterSerializer(serializers.Serializer):
 
 
 class PatientPasswordChangeSerializer(serializers.Serializer):
-    """Legacy — changement MDP patient via OTP (déprécié, comptes sans MDP)."""
+    """Legacy - changement MDP patient via OTP (déprécié, comptes sans MDP)."""
 
     phone = serializers.CharField()
     otp = serializers.RegexField(

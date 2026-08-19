@@ -182,7 +182,7 @@ class DodoCardViewSet(viewsets.ModelViewSet):
             )
             return Response(
                 {
-                    "detail": "Aucune carte active — nouvelle carte émise.",
+                    "detail": "Aucune carte active - nouvelle carte émise.",
                     "old_card": None,
                     "card": DodoCardSerializer(card).data,
                 },
@@ -206,7 +206,7 @@ class DodoCardViewSet(viewsets.ModelViewSet):
         )
         _notify_card_event(
             patient,
-            title="DotoCard — perte signalée",
+            title="DotoCard - perte signalée",
             body="Votre ancienne carte est invalidée. Une nouvelle DotoCard a été émise.",
             card_id=card.id,
             event="report_loss",
@@ -405,7 +405,7 @@ class ScanView(APIView):
         consent_required = req.status == AccessRequest.Status.PENDING
         is_emergency = req.status == AccessRequest.Status.EMERGENCY_BYPASS
 
-        # Toujours notifier le Hub du MÊME pro (user_id) — y compris consent pending
+        # Toujours notifier le Hub du MÊME pro (user_id) - y compris consent pending
         # et réutilisation grant/pending (create_access_request ne republie pas alors).
         # Canal ciblé : pas de broadcast global.
         event = {
@@ -435,7 +435,7 @@ class ScanView(APIView):
                     "En attente de confirmation patient…"
                     if consent_required
                     else (
-                        "Accès urgence — consentement non requis."
+                        "Accès urgence - consentement non requis."
                         if is_emergency
                         else "Accès autorisé."
                     )
@@ -635,7 +635,7 @@ class DashboardView(APIView):
 
 
 class HubDashboardView(APIView):
-    """Vue d'accueil professionnels (DotoHub) — stats légères et raccourcis."""
+    """Vue d'accueil professionnels (DotoHub) - stats légères et raccourcis."""
 
     permission_classes = [IsProfessional]
 

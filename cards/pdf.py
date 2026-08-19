@@ -1,4 +1,4 @@
-"""Génération PDF imprimable DotoCard — faces Assuré / Non assuré (marque DOTO+)."""
+"""Génération PDF imprimable DotoCard - faces Assuré / Non assuré (marque DOTO+)."""
 from __future__ import annotations
 
 import io
@@ -39,7 +39,7 @@ def _logo_path() -> Path | None:
 
 def _fmt_date(d) -> str:
     if not d:
-        return "—"
+        return "-"
     try:
         return d.strftime("%d/%m/%Y")
     except Exception:
@@ -57,17 +57,17 @@ def _allergies_label(patient) -> str:
 def _taux_pills(assurance) -> list[str]:
     garanties = getattr(assurance, "garanties", None) or []
     if not garanties:
-        return ["Consult. —", "Soins. —", "Pharma. —"]
+        return ["Consult. -", "Soins. -", "Pharma. -"]
     labels = []
     for g in garanties[:3]:
         if not isinstance(g, dict):
             continue
         cat = str(g.get("categorie") or "Garantie")
         short = cat.split()[0][:8] + "."
-        taux = g.get("taux", "—")
+        taux = g.get("taux", "-")
         labels.append(f"{short} {taux}%")
     while len(labels) < 3:
-        labels.append("—")
+        labels.append("-")
     return labels[:3]
 
 
@@ -96,14 +96,14 @@ def _draw_card_front(c: canvas.Canvas, card, x, y, w, h, qr_reader):
     c.setFont("Helvetica", 7)
     c.drawRightString(x + w - 3 * mm, y + h - 5.8 * mm, "République du Bénin")
 
-    # Bande urgence (bas) — contraste texte renforcé
+    # Bande urgence (bas) - contraste texte renforcé
     foot_h = 12 * mm
     c.setFillColor(EMERGENCY_BG)
     c.rect(x, y, w, foot_h, fill=1, stroke=0)
     c.setStrokeColor(HexColor("#F0C4C4"))
     c.line(x, y + foot_h, x + w, y + foot_h)
 
-    blood = getattr(patient, "groupe_sanguin", "") or "—"
+    blood = getattr(patient, "groupe_sanguin", "") or "-"
     allergies = _allergies_label(patient)
     urg = display_phone(getattr(patient, "tel_urgence", "") or "")
 
@@ -167,9 +167,9 @@ def _draw_card_front(c: canvas.Canvas, card, x, y, w, h, qr_reader):
     info_x = photo_x + photo_size + 3 * mm
     fields = [
         ("Nom", (patient.nom or "").upper()),
-        ("Prénoms", patient.prenom or "—"),
+        ("Prénoms", patient.prenom or "-"),
         ("Date de naissance", _fmt_date(patient.date_naissance)),
-        ("Lieu de naissance", getattr(patient, "lieu_naissance", "") or "—"),
+        ("Lieu de naissance", getattr(patient, "lieu_naissance", "") or "-"),
     ]
     fy = body_top - 12 * mm
     for label, val in fields:
@@ -178,17 +178,17 @@ def _draw_card_front(c: canvas.Canvas, card, x, y, w, h, qr_reader):
         c.drawString(info_x, fy + 3.2 * mm, label)
         c.setFillColor(TEXT)
         c.setFont("Helvetica-Bold", 8)
-        c.drawString(info_x, fy, (val or "—")[:28])
+        c.drawString(info_x, fy, (val or "-")[:28])
         fy -= 6.5 * mm
 
-    # NPI + QR + tél — QR agrandi
+    # NPI + QR + tél - QR agrandi
     right_x = x + w - 32 * mm
     c.setFillColor(MUTED)
     c.setFont("Helvetica", 5.5)
     c.drawString(right_x, body_top - 3 * mm, "NPI")
     c.setFillColor(TEXT)
     c.setFont("Helvetica-Bold", 7)
-    c.drawString(right_x, body_top - 6 * mm, (patient.npi or "—")[:18])
+    c.drawString(right_x, body_top - 6 * mm, (patient.npi or "-")[:18])
 
     qr_size = 26 * mm
     c.drawImage(qr_reader, right_x, body_top - 7 * mm - qr_size, width=qr_size, height=qr_size, mask="auto")
@@ -205,7 +205,7 @@ def _draw_card_front(c: canvas.Canvas, card, x, y, w, h, qr_reader):
 def _wrap(text: str, width: int) -> list[str]:
     words = (text or "").split()
     if not words:
-        return ["—"]
+        return ["-"]
     lines, cur = [], ""
     for w in words:
         trial = f"{cur} {w}".strip()
@@ -217,7 +217,7 @@ def _wrap(text: str, width: int) -> list[str]:
             cur = w
     if cur:
         lines.append(cur)
-    return lines or ["—"]
+    return lines or ["-"]
 
 
 def _draw_card_back(c: canvas.Canvas, card, x, y, w, h):
@@ -236,10 +236,10 @@ def _draw_card_back(c: canvas.Canvas, card, x, y, w, h):
 
     # Zone filiation / adresse
     mid_y = y + h - header_h - 2 * mm
-    pere = getattr(patient, "nom_pere", "") or "—"
-    mere = getattr(patient, "nom_mere", "") or "—"
-    commune = getattr(patient, "adresse_commune", "") or "—"
-    quartier = getattr(patient, "adresse_quartier", "") or "—"
+    pere = getattr(patient, "nom_pere", "") or "-"
+    mere = getattr(patient, "nom_mere", "") or "-"
+    commune = getattr(patient, "adresse_commune", "") or "-"
+    quartier = getattr(patient, "adresse_quartier", "") or "-"
     c.setFillColor(MUTED)
     c.setFont("Helvetica-Bold", 6)
     c.drawString(x + 3 * mm, mid_y - 4 * mm, "Filiation")
@@ -267,7 +267,7 @@ def _draw_card_back(c: canvas.Canvas, card, x, y, w, h):
         c.drawString(x + 3 * mm, block_y + block_h - 9 * mm, (assurance.assureur or "")[:36])
         c.setFont("Helvetica", 6)
         c.setFillColor(TEXT)
-        line = f"Police: {assurance.num_police or '—'}  ·  {assurance.type_couverture or '—'}"
+        line = f"Police: {assurance.num_police or '-'}  ·  {assurance.type_couverture or '-'}"
         c.drawString(x + 3 * mm, block_y + block_h - 13 * mm, line[:55])
 
         # Pills taux (info, pas boutons)
@@ -327,7 +327,7 @@ def build_dodocard_pdf(card) -> bytes:
     c.setFont("Helvetica-Bold", 18)
     c.drawString(18 * mm, height - 14 * mm, "DOTO+")
     c.setFont("Helvetica", 10)
-    c.drawString(18 * mm, height - 21 * mm, "DotoCard — carte d'accès santé · République du Bénin")
+    c.drawString(18 * mm, height - 21 * mm, "DotoCard - carte d'accès santé · République du Bénin")
 
     logo = _logo_path()
     if logo:
@@ -377,7 +377,7 @@ def build_dodocard_pdf(card) -> bytes:
     c.drawCentredString(
         width / 2,
         back_y - 15 * mm,
-        "Aucune donnée médicale dans le QR — token d'accès opaque uniquement.",
+        "Aucune donnée médicale dans le QR - token d'accès opaque uniquement.",
     )
 
     # Badge statut
@@ -393,7 +393,7 @@ def build_dodocard_pdf(card) -> bytes:
     c.drawCentredString(
         width / 2,
         10 * mm,
-        "DOTO+ · Document généré automatiquement — ne pas plastifier le QR trop près des bords.",
+        "DOTO+ · Document généré automatiquement - ne pas plastifier le QR trop près des bords.",
     )
     c.showPage()
     c.save()

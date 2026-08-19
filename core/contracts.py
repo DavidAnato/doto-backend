@@ -1,4 +1,4 @@
-"""Contrats API figés — source de vérité partagée (PIN / OTP / notifications / conflits).
+"""Contrats API figés - source de vérité partagée (PIN / OTP / notifications / conflits).
 
 Les clients (DotoHub web, DotoHub mobile, DotoPlus, Admin) DOIVENT s'aligner
 sur ces constantes. Ne pas diverger (longueur PIN/OTP, types de notif, payloads).
@@ -97,6 +97,39 @@ BON_EXAMEN_STATUTS = [
     ("cloture", "Clôturé"),
 ]
 
+ORDONNANCE_STATUTS = [
+    ("active", "Active"),
+    ("terminee", "Terminée"),
+    ("payee", "Payé"),
+    ("annulee", "Annulée"),
+]
+# Ancienne valeur DB / API : dispensee (Dispensé) -> payee (Payé)
+ORDONNANCE_STATUT_ALIASES = {
+    "dispensee": "payee",
+    "dispense": "payee",
+}
+
+KYC_STATUTS = [
+    ("brouillon", "Brouillon"),
+    ("en_attente", "En attente de validation"),
+    ("valide", "Validé"),
+    ("refuse", "Refusé"),
+]
+
+AFFILIATION_KINDS = [
+    ("etablissement_sante", "Établissement de santé"),
+    ("pharmacie", "Pharmacie"),
+    ("laboratoire", "Laboratoire"),
+    ("independant", "Indépendant"),
+]
+
+AFFILIATION_STATUTS = [
+    ("brouillon", "Brouillon"),
+    ("en_attente", "En attente de validation"),
+    ("valide", "Validé"),
+    ("refuse", "Refusé"),
+]
+
 # Rôles pro qui doivent rattacher au moins un hôpital + un principal.
 HOSPITAL_REQUIRED_ROLES = (
     "medecin",
@@ -129,13 +162,13 @@ SSE_EVENT_TYPES = {
     "connected": "Hello à l'ouverture du flux",
     "ping": "Keepalive (~15 s)",
     "notification": "Notification in-app (title/body/payload)",
-    "patient_list": "Patient créé/modifié — rafraîchir listes / dashboard",
+    "patient_list": "Patient créé/modifié - rafraîchir listes / dashboard",
     "appointment": (
-        "RDV créé/modifié/annulé/confirmé — payload : patient_id, appointment_id, "
+        "RDV créé/modifié/annulé/confirmé - payload : patient_id, appointment_id, "
         "debut, fin, statut, professionnel_id, professionnel_nom, structure_id, kind"
     ),
     "insurance_updated": (
-        "Assurance ajoutée/modifiée/retirée — payload : patient_id, has_insurance, "
+        "Assurance ajoutée/modifiée/retirée - payload : patient_id, has_insurance, "
         "assureur, num_police, droits_valides, kind (created|updated|removed)"
     ),
     "dossier_updated": "Dossier clinique (consultation, constantes…)",
@@ -155,6 +188,9 @@ NOTIFICATION_KIND_ROUTES = {
     "consultation_annulee": "dossier_updated",
     "ordonnance": "ordonnance",
     "ordonnance_dispensee": "ordonnance",
+    "ordonnance_payee": "ordonnance",
+    "kyc_updated": "notifications",
+    "affiliation_updated": "notifications",
     "examen": "examen",
     "examen_fichier": "examen",
     "rdv_created": "appointment",
@@ -180,6 +216,11 @@ def contracts_payload():
         "medicament_formes": MEDICAMENT_FORMES,
         "medicament_moments": [{"value": v, "label": l} for v, l in MEDICAMENT_MOMENTS],
         "bon_examen_statuts": [{"value": v, "label": l} for v, l in BON_EXAMEN_STATUTS],
+        "ordonnance_statuts": [{"value": v, "label": l} for v, l in ORDONNANCE_STATUTS],
+        "ordonnance_statut_aliases": dict(ORDONNANCE_STATUT_ALIASES),
+        "kyc_statuts": [{"value": v, "label": l} for v, l in KYC_STATUTS],
+        "affiliation_kinds": [{"value": v, "label": l} for v, l in AFFILIATION_KINDS],
+        "affiliation_statuts": [{"value": v, "label": l} for v, l in AFFILIATION_STATUTS],
         "notification_routes": NOTIFICATION_ROUTES,
         "sse_event_types": list(SSE_EVENT_TYPES.keys()),
         "conflict": "last_write_wins",

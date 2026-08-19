@@ -1,5 +1,5 @@
 """
-Providers externes — SMS OTP et client ANIP.
+Providers externes - SMS OTP et client ANIP.
 
 Interface stable + implémentations Mock (dev) et stubs HTTP (prod).
 Sélection via SMS_PROVIDER / ANIP_PROVIDER dans les settings.
@@ -28,14 +28,14 @@ class SmsProvider(ABC):
 
 
 def _otp_key(identifier: str) -> str:
-    """Clé cache safe (pas d'espaces — warning memcached)."""
+    """Clé cache safe (pas d'espaces - warning memcached)."""
     import hashlib
     digest = hashlib.sha256(identifier.encode()).hexdigest()[:24]
     return f"otp:{digest}"
 
 
 class MockSmsProvider(SmsProvider):
-    """Stocke le code en cache et journalise — aucun SMS réel (dev/smoke)."""
+    """Stocke le code en cache et journalise - aucun SMS réel (dev/smoke)."""
 
     def send_otp(self, telephone: str, code: str) -> bool:
         cache.set(_otp_key(telephone), code, timeout=getattr(settings, "OTP_TTL_SECONDS", 300))
@@ -44,7 +44,7 @@ class MockSmsProvider(SmsProvider):
 
 
 class TwilioSmsProvider(SmsProvider):
-    """Stub Twilio — nécessite TWILIO_ACCOUNT_SID / AUTH_TOKEN / FROM_NUMBER."""
+    """Stub Twilio - nécessite TWILIO_ACCOUNT_SID / AUTH_TOKEN / FROM_NUMBER."""
 
     def send_otp(self, telephone: str, code: str) -> bool:
         sid = getattr(settings, "TWILIO_ACCOUNT_SID", "")
@@ -57,7 +57,7 @@ class TwilioSmsProvider(SmsProvider):
             from twilio.rest import Client  # type: ignore
 
             client = Client(sid, token)
-            body = f"DOTO+ — votre code OTP : {code}. Valable 5 min."
+            body = f"DOTO+ - votre code OTP : {code}. Valable 5 min."
             client.messages.create(body=body, from_=from_num, to=telephone)
             cache.set(_otp_key(telephone), code, timeout=getattr(settings, "OTP_TTL_SECONDS", 300))
             return True
@@ -137,7 +137,7 @@ class MockAnipClient(AnipClient):
 
 
 class HttpAnipClient(AnipClient):
-    """Stub HTTP — ANIP_BASE_URL + ANIP_API_KEY. Non bloquant si absents."""
+    """Stub HTTP - ANIP_BASE_URL + ANIP_API_KEY. Non bloquant si absents."""
 
     def verify_npi(self, npi: str, nom: str = "", prenom: str = "") -> AnipIdentity:
         import urllib.error
@@ -147,7 +147,7 @@ class HttpAnipClient(AnipClient):
         base = getattr(settings, "ANIP_BASE_URL", "").rstrip("/")
         key = getattr(settings, "ANIP_API_KEY", "")
         if not base:
-            logger.warning("ANIP_BASE_URL absent — repli MockAnipClient.")
+            logger.warning("ANIP_BASE_URL absent - repli MockAnipClient.")
             return MockAnipClient().verify_npi(npi, nom, prenom)
 
         url = f"{base}/verify?npi={urllib.request.quote(npi)}"

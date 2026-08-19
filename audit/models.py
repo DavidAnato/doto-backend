@@ -29,4 +29,4 @@ class AuditLog(models.Model):
         ordering = ["-timestamp"]
 
     def __str__(self):
-        return f"[{self.timestamp:%Y-%m-%d %H:%M}] {self.username} — {self.action}"
+        return f"[{self.timestamp:%Y-%m-%d %H:%M}] {self.username} - {self.action}"

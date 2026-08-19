@@ -2,7 +2,7 @@
 Tokens DotoCard (QR).
 
 La carte est une CARTE D'ACCÈS : le QR ne contient aucune donnée médicale.
-Un token opaque court (aléatoire) suffit — la sécurité repose sur :
+Un token opaque court (aléatoire) suffit - la sécurité repose sur :
   1. absence de données patient dans le QR
   2. token imprévisible
   3. révocation / réémission côté serveur
@@ -44,7 +44,7 @@ def _fernet():
 def generate_token(npi=None):
     """
     Génère un token QR léger (opaque).
-    `npi` est ignoré volontairement — rien d'identifiant dans le QR.
+    `npi` est ignoré volontairement - rien d'identifiant dans le QR.
     """
     return secrets.token_urlsafe(18)
 

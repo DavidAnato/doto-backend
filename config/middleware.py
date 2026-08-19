@@ -5,7 +5,7 @@ from django.conf import settings
 class OpenSecurityMiddleware:
     """Désactive les checks CSRF quand OPEN_CSRF / DEBUG / CORS ouvert.
 
-    L'API s'authentifie surtout via JWT (Authorization) — pas de cookie session
+    L'API s'authentifie surtout via JWT (Authorization) - pas de cookie session
     cross-origin requis. En prod stricte : DJANGO_DEBUG=False et OPEN_CSRF=False.
     """
 

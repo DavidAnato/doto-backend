@@ -11,7 +11,7 @@ from .serializers import AuditLogSerializer
 
 
 class AuditLogViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
-    """Consultation du journal d'audit — admin uniquement. Export CSV (CDC §3.5)."""
+    """Consultation du journal d'audit - admin uniquement. Export CSV (CDC §3.5)."""
 
     queryset = AuditLog.objects.select_related("user").all()
     serializer_class = AuditLogSerializer

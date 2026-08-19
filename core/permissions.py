@@ -1,16 +1,16 @@
-"""Permissions RBAC — rôles professionnels de santé (CDC §1.3 / §6.2).
+"""Permissions RBAC - rôles professionnels de santé (CDC §1.3 / §6.2).
 
 ## Matrice LECTURE (qui voit quoi)
 
 | Rôle            | Urgence | Dossier clinique | Historique | Ordo | Examens | Constantes | Assurance | Scan |
 |-----------------|---------|------------------|------------|------|---------|------------|-----------|------|
 | Médecin         | oui     | complet          | oui        | oui  | oui     | oui        | oui       | oui  |
-| Infirmier       | oui     | soins (sous-ens.)| oui        | —    | oui     | oui        | —         | oui  |
-| Pharmacien      | oui*    | —                | —          | oui  | —       | —          | —         | oui  |
-| Laborantin      | oui*    | —                | —          | —    | oui     | —          | —         | oui  |
-| Ambulancier     | oui**   | —                | —          | —    | —       | oui (É)    | —         | oui  |
-| Réceptionniste  | identité| —                | —          | —    | —       | —          | oui       | oui  |
-| Patient         | propre  | propre dossier   | propre     | propre| propre | propre     | propre    | —    |
+| Infirmier       | oui     | soins (sous-ens.)| oui        | -    | oui     | oui        | -         | oui  |
+| Pharmacien      | oui*    | -                | -          | oui  | -       | -          | -         | oui  |
+| Laborantin      | oui*    | -                | -          | -    | oui     | -          | -         | oui  |
+| Ambulancier     | oui**   | -                | -          | -    | -       | oui (É)    | -         | oui  |
+| Réceptionniste  | identité| -                | -          | -    | -       | -          | oui       | oui  |
+| Patient         | propre  | propre dossier   | propre     | propre| propre | propre     | propre    | -    |
 | Admin           | oui     | oui              | oui        | oui  | oui     | oui        | oui       | oui  |
 
 * Pharmacien/Laborantin : urgence = allergies / groupe sanguin pertinents.
@@ -37,7 +37,7 @@
 
 Toute ouverture dossier pro (scan ou recherche) crée une AccessRequest.
 Le patient confirme via Doto+ (SSE + notif). Exceptions : mode urgence
-explicite ou rôle ambulancier (emergency_open) — bypass audité.
+explicite ou rôle ambulancier (emergency_open) - bypass audité.
 """
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 

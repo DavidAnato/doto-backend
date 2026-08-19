@@ -1,4 +1,4 @@
-# Déploiement Render — doto-backend (API DOTO+)
+# Déploiement Render - doto-backend (API DOTO+)
 
 Guide complet : build → migrate → collectstatic → seeddata → serveur.
 
@@ -22,7 +22,7 @@ Guide complet : build → migrate → collectstatic → seeddata → serveur.
 
 > En dév local : **aucune variable obligatoire**.  
 > Sur Render, renseigner au minimum `DATABASE_URL` (auto si Postgres lié) et idéalement `DJANGO_SECRET_KEY`.  
-> CORS/CSRF restent ouverts par défaut (`CORS_ALLOW_ALL_ORIGINS=True`) tant que tu ne les désactives pas — adapté démo/test.
+> CORS/CSRF restent ouverts par défaut (`CORS_ALLOW_ALL_ORIGINS=True`) tant que tu ne les désactives pas - adapté démo/test.
 
 | Variable | Valeur | Obligatoire ? |
 |----------|--------|---------------|
@@ -88,7 +88,7 @@ L’endpoint `POST /api/auth/patient/ocr-id/` répond en JSON :
 
 | HTTP | `code` | Sens |
 |------|--------|------|
-| 200 | — | `ok: true` + NPI / identité |
+| 200 | - | `ok: true` + NPI / identité |
 | 422 | `npi_not_found` | Image lue, NPI illisible |
 | 503 | `ocr_unavailable` | Binaire Tesseract manquant |
 | 504 | `ocr_timeout` | Plus de ~25 s (photo trop lourde) |
@@ -104,7 +104,7 @@ pip install --upgrade pip && pip install -r requirements.txt && python manage.py
 ```
 
 > Forcer **Python 3.11.11** : fichier `.python-version` **et** variable d’env `PYTHON_VERSION=3.11.11`  
-> (Dashboard → Environment — le Blueprint seul ne met pas à jour un service déjà créé).  
+> (Dashboard → Environment - le Blueprint seul ne met pas à jour un service déjà créé).  
 > **Ne pas** `pip install -r requirements-ocr.txt` sur Render (Paddle/RapidOCR).
 
 ---
@@ -150,7 +150,7 @@ python -m venv .venv
 # Unix:    source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
-# .env optionnel — sans fichier : SQLite + CORS/CSRF ouverts
+# .env optionnel - sans fichier : SQLite + CORS/CSRF ouverts
 python manage.py collectstatic --noinput
 python manage.py migrate --noinput
 python manage.py seeddata
@@ -165,11 +165,11 @@ python manage.py runserver 0.0.0.0:8000
 
 ---
 
-## 7. Fronts (Static Sites Render) — rappel
+## 7. Fronts (Static Sites Render) - rappel
 
 Après l’API :
 
-**DotoHub / Admin** (Vite) — Build :
+**DotoHub / Admin** (Vite) - Build :
 
 ```bash
 npm ci && npm run build

@@ -1,4 +1,4 @@
-"""DotoCard — carte d'accès QR (table `tokens_qr`, CDC §2)."""
+"""DotoCard - carte d'accès QR (table `tokens_qr`, CDC §2)."""
 from datetime import timedelta
 
 from django.conf import settings
@@ -56,7 +56,7 @@ class DodoCard(models.Model):
         ordering = ["-date_creation"]
 
     def __str__(self):
-        return f"DotoCard {self.patient.npi} — {self.get_statut_display()}"
+        return f"DotoCard {self.patient.npi} - {self.get_statut_display()}"
 
     @property
     def is_active(self):
@@ -77,7 +77,7 @@ class DodoCard(models.Model):
         )
 
     def revoke(self, user=None, motif: str = "", mark_lost: bool = False):
-        """Invalide le token (perte/vol) — dossier intact."""
+        """Invalide le token (perte/vol) - dossier intact."""
         now = timezone.now()
         self.statut = self.Statut.REVOQUEE
         self.revoquee_le = now

@@ -1,5 +1,5 @@
 """
-Configuration Django — API DOTO+.
+Configuration Django - API DOTO+.
 
 Écosystème santé numérique béninois : carte d'accès QR (DotoCard),
 plateforme web pro (DotoHub), app patient (DotoPlus) et back-office (DotoPlus Admin).
@@ -35,11 +35,11 @@ def env_list(key, default=""):
 
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", "dev-insecure-change-me-in-production-dotoplus")
-# Défaut True : dév / démo / smoke — passer DJANGO_DEBUG=False en prod réelle
+# Défaut True : dév / démo / smoke - passer DJANGO_DEBUG=False en prod réelle
 DEBUG = env_bool("DJANGO_DEBUG", True)
 ALLOWED_HOSTS = env_list(
     "DJANGO_ALLOWED_HOSTS",
-    # `*` = tous les hôtes (LAN, hotspot, Render, Expo) — adapté dév/test
+    # `*` = tous les hôtes (LAN, hotspot, Render, Expo) - adapté dév/test
     "*",
 )
 
@@ -80,7 +80,7 @@ MIDDLEWARE = [
     "audit.middleware.AuditLogMiddleware",
 ]
 
-# WhiteNoise optionnel (prod / collectstatic) — ne bloque pas le démarrage sans package
+# WhiteNoise optionnel (prod / collectstatic) - ne bloque pas le démarrage sans package
 try:
     import whitenoise  # noqa: F401
 
@@ -217,7 +217,7 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
-# ─── CORS / CSRF — dév/test ouvert par défaut (pas de .env requis) ───────
+# ─── CORS / CSRF - dév/test ouvert par défaut (pas de .env requis) ───────
 # Forcer DJANGO_DEBUG=False + CORS_ALLOW_ALL_ORIGINS=False en prod stricte.
 CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", True)
 CORS_ALLOWED_ORIGINS = env_list(
