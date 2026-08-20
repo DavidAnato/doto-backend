@@ -184,7 +184,7 @@ MEDIA_ROOT = BASE_DIR / "media"
 PUBLIC_API_BASE = env(
     "PUBLIC_API_BASE",
     env("RENDER_EXTERNAL_URL")
-    or ("https://doto-backend-71tk.onrender.com" if env("RENDER") else "http://127.0.0.1:8000"),
+    or ("https://doto-backend-71tk.onrender.com" if env("RENDER") else "http://127.0.0.1:8001"),
 )
 
 # Render / reverse-proxy HTTPS
@@ -228,7 +228,9 @@ CORS_ALLOWED_ORIGINS = env_list(
     "http://localhost:8081,http://127.0.0.1:8081,"
     "http://localhost:8082,http://127.0.0.1:8082,"
     "http://localhost:19006,http://127.0.0.1:19006,"
-    "http://192.168.137.1:5173,http://192.168.100.3:5173",
+    "http://192.168.137.1:5173,http://192.168.100.3:5173,"
+    "https://doto-hub.surge.sh,https://dotoplus-admin.surge.sh,"
+    "https://doto-anato.loca.lt,https://dotoplus-api.loca.lt",
 )
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
@@ -250,7 +252,9 @@ _csrf_defaults = (
     "http://localhost:8081,http://127.0.0.1:8081,"
     "http://localhost:19006,http://127.0.0.1:19006,"
     "http://192.168.137.1:5173,http://192.168.100.3:5173,"
-    "http://10.0.2.2:5173"
+    "http://10.0.2.2:5173,"
+    "https://doto-hub.surge.sh,https://dotoplus-admin.surge.sh,"
+    "https://doto-anato.loca.lt,https://dotoplus-api.loca.lt"
 )
 _render_url = env("RENDER_EXTERNAL_URL", "")
 if _render_url:
