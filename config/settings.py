@@ -35,8 +35,9 @@ def env_list(key, default=""):
 
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", "dev-insecure-change-me-in-production-dotoplus")
-# Défaut True : dév / démo / smoke - passer DJANGO_DEBUG=False en prod réelle
-DEBUG = env_bool("DJANGO_DEBUG", True)
+# Dév : True. Render définit RENDER=true → False même si DJANGO_DEBUG est absent
+# (la page 500 technique Django réimporte config.urls → _DeadlockError).
+DEBUG = env_bool("DJANGO_DEBUG", False if env("RENDER") else True)
 ALLOWED_HOSTS = env_list(
     "DJANGO_ALLOWED_HOSTS",
     # `*` = tous les hôtes (LAN, hotspot, Render, Expo) - adapté dév/test
