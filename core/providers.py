@@ -16,7 +16,17 @@ from typing import Optional
 from django.conf import settings
 from django.core.cache import cache
 
+from core.contracts import DEMO_OTP_CODE as CONTRACT_DEMO_OTP
+
 logger = logging.getLogger(__name__)
+
+
+def _sms_provider_name() -> str:
+    return (getattr(settings, "SMS_PROVIDER", None) or "mock").lower()
+
+
+def _demo_otp_code() -> str:
+    return getattr(settings, "DEMO_OTP_CODE", None) or CONTRACT_DEMO_OTP
 
 
 # ─── SMS OTP ──────────────────────────────────────────────────────────────────
@@ -39,7 +49,7 @@ class MockSmsProvider(SmsProvider):
 
     def send_otp(self, telephone: str, code: str) -> bool:
         cache.set(_otp_key(telephone), code, timeout=getattr(settings, "OTP_TTL_SECONDS", 300))
-        logger.info("[MockSMS] OTP %s → %s (code démo: %s)", code, telephone, settings.DEMO_OTP_CODE)
+        logger.info("[MockSMS] OTP %s → %s (code démo: %s)", code, telephone, _demo_otp_code())
         return True
 
 
@@ -67,8 +77,7 @@ class TwilioSmsProvider(SmsProvider):
 
 
 def get_sms_provider() -> SmsProvider:
-    name = (getattr(settings, "SMS_PROVIDER", "mock") or "mock").lower()
-    if name == "twilio":
+    if _sms_provider_name() == "twilio":
         return TwilioSmsProvider()
     return MockSmsProvider()
 
@@ -80,19 +89,19 @@ def generate_otp(digits: int = 5) -> str:
 def issue_otp(telephone: str) -> str:
     """Génère, envoie et retourne le code (le code n'est renvoyé que pour mock/débogage)."""
     code = generate_otp()
-    if (getattr(settings, "SMS_PROVIDER", "mock") or "mock").lower() == "mock":
-        code = settings.DEMO_OTP_CODE
+    if _sms_provider_name() == "mock":
+        code = _demo_otp_code()
     get_sms_provider().send_otp(telephone, code)
     cache.set(_otp_key(telephone), code, timeout=getattr(settings, "OTP_TTL_SECONDS", 300))
     return code
 
 
 def verify_otp(telephone: str, code: str, username_fallback: str = "") -> bool:
-    """Valide un OTP. Accepte toujours DEMO_OTP_CODE si SMS_PROVIDER=mock."""
+    """Valide un OTP. Accepte toujours 00000 (démo produit) en plus du vrai code."""
     if not code:
         return False
-    provider = (getattr(settings, "SMS_PROVIDER", "mock") or "mock").lower()
-    if provider == "mock" and code == settings.DEMO_OTP_CODE:
+    demo = _demo_otp_code()
+    if code == demo or code == CONTRACT_DEMO_OTP:
         return True
     for key in filter(None, [telephone, username_fallback]):
         cache_key = _otp_key(key)

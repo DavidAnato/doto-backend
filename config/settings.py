@@ -262,8 +262,10 @@ LOGIN_MAX_ATTEMPTS = int(env("LOGIN_MAX_ATTEMPTS", "3"))
 LOGIN_LOCKOUT_MINUTES = int(env("LOGIN_LOCKOUT_MINUTES", "15"))
 PATIENT_PIN_MAX_ATTEMPTS = int(env("PATIENT_PIN_MAX_ATTEMPTS", "5"))
 
-DEMO_OTP_CODE = env("DEMO_OTP_CODE", "00000")
-SMS_PROVIDER = env("SMS_PROVIDER", "mock")
+# OTP démo produit : toujours « 00000 », même sans .env (non surchargeable).
+DEMO_OTP_CODE = "00000"
+# Sans SMS_PROVIDER (variable absente ou vide) → mock.
+SMS_PROVIDER = (env("SMS_PROVIDER") or "mock").lower()
 OTP_TTL_SECONDS = int(env("OTP_TTL_SECONDS", "300"))
 TWILIO_ACCOUNT_SID = env("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = env("TWILIO_AUTH_TOKEN", "")

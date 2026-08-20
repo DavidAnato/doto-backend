@@ -46,7 +46,7 @@ python manage.py runserver 8000
 
 ## Comptes de démonstration
 Login pro / admin : **identifiant + mot de passe** (pas d'OTP).
-OTP mock `00000` : inscription patient ou changement de mot de passe uniquement.
+OTP `00000` : toujours accepté sur les flux patient (inscription, login OTP, mot de passe), même sans `.env`.
 Liste complète affichée par `seeddata` / `seed_demo`.
 
 | Rôle | Identifiants |
@@ -65,8 +65,8 @@ Matrice d'accès : voir `core/permissions.py` et le README racine.
 ## Providers OTP / ANIP
 | Variable | Défaut | Rôle |
 |----------|--------|------|
-| `SMS_PROVIDER` | `mock` | `mock` (code `DEMO_OTP_CODE`) ou `twilio` |
-| `DEMO_OTP_CODE` | `00000` | Code accepté en mock |
+| `SMS_PROVIDER` | `mock` | `mock` (émet `00000`) ou `twilio` ; absent / vide → `mock` |
+| `DEMO_OTP_CODE` | `00000` (hardcodé) | Toujours accepté sur les flux patient, en plus du vrai code |
 | `TWILIO_*` | - | Stub Twilio (optionnel) |
 | `ANIP_PROVIDER` | `mock` | `mock` ou `http` |
 | `ANIP_BASE_URL` / `ANIP_API_KEY` | - | Stub HTTP ANIP |

@@ -144,8 +144,7 @@ class RequestOtpView(APIView):
             "purpose": purpose,
             "provider": settings.SMS_PROVIDER,
         }
-        if settings.SMS_PROVIDER == "mock":
-            resp["hint"] = f"Mode mock - utilisez le code {settings.DEMO_OTP_CODE}"
+        resp["hint"] = f"Code démo {settings.DEMO_OTP_CODE} toujours accepté"
         return Response(resp)
 
 
