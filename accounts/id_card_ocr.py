@@ -429,11 +429,16 @@ def _items_from_tesseract(image_bytes: bytes) -> list[dict[str, Any]]:
     return items
 
 
+def _ocr_engine_pref() -> str:
+    return (os.environ.get("DOTO_OCR_ENGINE") or "tesseract").lower().strip() or "tesseract"
+
+
 @lru_cache(maxsize=1)
 def ocr_engine_status() -> dict[str, Any]:
     """Sonde légère pour /api/health/ - pas d'OCR d'image."""
+    engine = _ocr_engine_pref()
     status: dict[str, Any] = {
-        "engine": os.environ.get("DOTO_OCR_ENGINE", "tesseract"),
+        "engine": engine,
         "available": False,
         "tesseract_cmd": None,
         "tessdata": os.environ.get("TESSDATA_PREFIX") or None,
@@ -441,6 +446,37 @@ def ocr_engine_status() -> dict[str, Any]:
         "langs": [],
         "detail": None,
     }
+
+    if engine in ("rapid", "rapidocr"):
+        try:
+            from rapidocr_onnxruntime import RapidOCR  # noqa: F401
+
+            # Instancie une fois (modèles locaux) pour confirmer la dispo réelle.
+            _rapid_engine()
+            status["available"] = True
+            status["detail"] = "rapidocr prêt"
+            status["version"] = "rapidocr-onnxruntime"
+        except Exception as e:  # noqa: BLE001
+            status["detail"] = (
+                f"RapidOCR indisponible: {e}. "
+                "Local: pip install -r requirements-ocr.txt "
+                "(rapidocr-onnxruntime + opencv-python-headless)."
+            )
+            logger.warning("OCR status: %s", e)
+        return status
+
+    if engine in ("paddle", "paddleocr"):
+        try:
+            _paddle_engine()
+            status["available"] = True
+            status["detail"] = "paddleocr prêt"
+            status["version"] = "paddleocr"
+        except Exception as e:  # noqa: BLE001
+            status["detail"] = f"PaddleOCR indisponible: {e}"
+            logger.warning("OCR status: %s", e)
+        return status
+
+    # tesseract / auto / vide → sonde Tesseract (prod Render)
     try:
         import pytesseract
 
@@ -507,6 +543,33 @@ def _items_from_rapid(image_bytes: bytes) -> list[dict[str, Any]]:
     return items
 
 
+def _ocr_unavailable_hint(engine_pref: str, errors: list[str]) -> str:
+    """Message API selon le moteur demandé (pas de hint Render si RapidOCR)."""
+    joined = " | ".join(errors[:3]) if errors else "aucun moteur OCR utilisable"
+    if engine_pref in ("rapid", "rapidocr"):
+        return (
+            "OCR indisponible (RapidOCR). "
+            "Installer en local : pip install -r requirements-ocr.txt "
+            f"puis redémarrer runserver. Détail: {joined}"
+        )
+    if engine_pref in ("paddle", "paddleocr"):
+        return (
+            "OCR indisponible (PaddleOCR). "
+            f"Vérifier l'installation paddleocr. Détail: {joined}"
+        )
+    if engine_pref == "auto":
+        return (
+            "OCR indisponible (auto: tesseract/rapid/paddle). "
+            f"Détail: {joined}"
+        )
+    return (
+        "OCR indisponible (Tesseract). Sur Render : paquets apt tesseract-ocr "
+        "+ tesseract-ocr-fra + tesseract-ocr-eng (Native Environment). "
+        f"En local : installer Tesseract ou passer à DOTO_OCR_ENGINE=rapidocr. "
+        f"Détail: {joined}"
+    )
+
+
 def read_items(image_bytes: bytes) -> tuple[list[dict[str, Any]], str]:
     """Retourne (items spatiaux, moteur).
 
@@ -514,7 +577,7 @@ def read_items(image_bytes: bytes) -> tuple[list[dict[str, Any]], str]:
     si installés et DOTO_OCR_ENGINE=rapid|paddle|auto - trop lourds pour le free.
     """
     errors: list[str] = []
-    engine_pref = os.environ.get("DOTO_OCR_ENGINE", "tesseract").lower().strip()
+    engine_pref = _ocr_engine_pref()
     try_tesseract = engine_pref in ("tesseract", "tess", "auto", "")
     try_rapid = engine_pref in ("rapid", "rapidocr", "auto")
     try_paddle = engine_pref in ("paddle", "paddleocr", "auto")
@@ -559,7 +622,8 @@ def read_items(image_bytes: bytes) -> tuple[list[dict[str, Any]], str]:
             if path:
                 Path(path).unlink(missing_ok=True)
 
-    if not try_tesseract:
+    # Fallback Tesseract uniquement en mode auto (pas si rapidocr est forcé).
+    if engine_pref == "auto" and not try_tesseract:
         try:
             items = _items_from_tesseract(image_bytes)
             if items:
@@ -567,11 +631,7 @@ def read_items(image_bytes: bytes) -> tuple[list[dict[str, Any]], str]:
         except Exception as e:  # noqa: BLE001
             errors.append(f"tesseract: {e}")
 
-    hint = (
-        "OCR indisponible. Sur Render : paquets apt tesseract-ocr + tesseract-ocr-fra "
-        "+ tesseract-ocr-eng (Native Environment). "
-    )
-    raise RuntimeError(hint + " | ".join(errors[:3]))
+    raise RuntimeError(_ocr_unavailable_hint(engine_pref, errors))
 
 
 # ---------------------------------------------------------------------------
