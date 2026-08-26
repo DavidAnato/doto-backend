@@ -230,7 +230,8 @@ CORS_ALLOWED_ORIGINS = env_list(
     "http://localhost:19006,http://127.0.0.1:19006,"
     "http://192.168.137.1:5173,http://192.168.100.3:5173,"
     "https://doto-hub.surge.sh,https://dotoplus-admin.surge.sh,"
-    "https://doto-anato.loca.lt,https://dotoplus-api.loca.lt",
+    "https://doto-anato.loca.lt,https://dotoplus-api.loca.lt,"
+    "https://itchy-owl-100.loca.lt",
 )
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
@@ -254,7 +255,8 @@ _csrf_defaults = (
     "http://192.168.137.1:5173,http://192.168.100.3:5173,"
     "http://10.0.2.2:5173,"
     "https://doto-hub.surge.sh,https://dotoplus-admin.surge.sh,"
-    "https://doto-anato.loca.lt,https://dotoplus-api.loca.lt"
+    "https://doto-anato.loca.lt,https://dotoplus-api.loca.lt,"
+    "https://itchy-owl-100.loca.lt"
 )
 _render_url = env("RENDER_EXTERNAL_URL", "")
 if _render_url:
