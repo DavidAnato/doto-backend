@@ -1,0 +1,9 @@
+name = "doto-api"
+main = "src/index.js"
+compatibility_date = "2026-10-24"
+account_id = "5233709f0fa81577637ea522fb408278"
+
+# Sous-domaine public. Le Worker crée l'enregistrement DNS s'il a le droit.
+[[routes]]
+pattern = "doto-api.await-tech.com"
+custom_domain = true

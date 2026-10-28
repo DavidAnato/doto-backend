@@ -8,10 +8,20 @@ from .access_views import (
     AccessRequestDenyView,
     AccessRequestDetailView,
     AccessRequestListView,
+    AccessRequestPriorApproveView,
+    AccessRequestPriorDenyView,
     AccessRequestRevokeView,
+    AccessRequestTouchView,
 )
 from .appointment_views import AppointmentViewSet
 from .block_views import AccessBlockLiftView, AccessBlockListCreateView, AdminForceRevokeView
+from .transfer_views import (
+    HopitalMereTransferApproveView,
+    HopitalMereTransferCancelView,
+    HopitalMereTransferConfirmView,
+    HopitalMereTransferDenyView,
+    HopitalMereTransferListCreateView,
+)
 from .views import MonDossierView, PatientViewSet
 
 router = DefaultRouter()
@@ -68,12 +78,52 @@ urlpatterns = [
         name="access-request-revoke",
     ),
     path(
+        "access-requests/<int:pk>/prior-approve/",
+        AccessRequestPriorApproveView.as_view(),
+        name="access-request-prior-approve",
+    ),
+    path(
+        "access-requests/<int:pk>/prior-deny/",
+        AccessRequestPriorDenyView.as_view(),
+        name="access-request-prior-deny",
+    ),
+    path(
+        "access-requests/<int:pk>/touch/",
+        AccessRequestTouchView.as_view(),
+        name="access-request-touch",
+    ),
+    path(
         "access-requests/<int:pk>/force-revoke/",
         AdminForceRevokeView.as_view(),
         name="access-request-force-revoke",
     ),
     path("access-blocks/", AccessBlockListCreateView.as_view(), name="access-block-list"),
     path("access-blocks/<int:pk>/lift/", AccessBlockLiftView.as_view(), name="access-block-lift"),
+    path(
+        "hopital-mere/transferts/",
+        HopitalMereTransferListCreateView.as_view(),
+        name="hopital-mere-transfer-list",
+    ),
+    path(
+        "hopital-mere/transferts/<int:pk>/approve/",
+        HopitalMereTransferApproveView.as_view(),
+        name="hopital-mere-transfer-approve",
+    ),
+    path(
+        "hopital-mere/transferts/<int:pk>/deny/",
+        HopitalMereTransferDenyView.as_view(),
+        name="hopital-mere-transfer-deny",
+    ),
+    path(
+        "hopital-mere/transferts/<int:pk>/confirm/",
+        HopitalMereTransferConfirmView.as_view(),
+        name="hopital-mere-transfer-confirm",
+    ),
+    path(
+        "hopital-mere/transferts/<int:pk>/cancel/",
+        HopitalMereTransferCancelView.as_view(),
+        name="hopital-mere-transfer-cancel",
+    ),
 ]
 
 urlpatterns += router.urls

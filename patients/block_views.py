@@ -114,6 +114,7 @@ class AccessBlockListCreateView(APIView):
                 AccessRequest.Status.APPROVED,
                 AccessRequest.Status.EMERGENCY_BYPASS,
                 AccessRequest.Status.PENDING,
+                AccessRequest.Status.PENDING_PRIOR,
             ),
         )
         if blocked_user_id:
@@ -122,8 +123,14 @@ class AccessBlockListCreateView(APIView):
             grant_qs = grant_qs.filter(structure_id=blocked_structure_id)
         patient_user = getattr(patient, "user", None) or user
         for req in grant_qs:
-            if req.has_active_grant or req.status == AccessRequest.Status.PENDING:
-                if req.status == AccessRequest.Status.PENDING:
+            if req.has_active_grant or req.status in (
+                AccessRequest.Status.PENDING,
+                AccessRequest.Status.PENDING_PRIOR,
+            ):
+                if req.status in (
+                    AccessRequest.Status.PENDING,
+                    AccessRequest.Status.PENDING_PRIOR,
+                ):
                     req.status = AccessRequest.Status.DENIED
                     req.responded_at = timezone.now()
                     req.save(update_fields=["status", "responded_at"])
@@ -178,8 +185,14 @@ class AdminForceRevokeView(APIView):
         if req is None:
             return Response({"detail": "Introuvable."}, status=status.HTTP_404_NOT_FOUND)
         patient_user = getattr(req.patient, "user", None) or request.user
-        if req.has_active_grant or req.status == AccessRequest.Status.PENDING:
-            if req.status == AccessRequest.Status.PENDING:
+        if req.has_active_grant or req.status in (
+            AccessRequest.Status.PENDING,
+            AccessRequest.Status.PENDING_PRIOR,
+        ):
+            if req.status in (
+                AccessRequest.Status.PENDING,
+                AccessRequest.Status.PENDING_PRIOR,
+            ):
                 req.status = AccessRequest.Status.DENIED
                 req.responded_at = timezone.now()
                 req.save(update_fields=["status", "responded_at"])

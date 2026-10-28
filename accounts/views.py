@@ -1,4 +1,5 @@
 import logging
+import threading
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
@@ -20,7 +21,7 @@ from core.providers import issue_otp, verify_otp
 
 from .models import StructureSante
 from .phone import normalize_phone
-from .photo_utils import validate_identity_photo
+from .photo_utils import prepare_identity_photo
 from .serializers import (
     MeUpdateSerializer,
     PatientLoginSerializer,
@@ -39,6 +40,9 @@ from .serializers import (
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+# L'OCR Tesseract tient un thread gunicorn ~25 s. Deux au plus, sinon
+# les  autres requêtes (photo, carte, health) restent en file.
+_OCR_SLOTS = threading.Semaphore(2)
 
 
 def tokens_for(user):
@@ -325,10 +329,12 @@ class PatientRegisterView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        from patients.access import activate_patient_application
         from patients.models import Patient
 
         npi = (data.get("npi") or "").strip()
-        if npi and Patient.objects.filter(npi__iexact=npi).exists():
+        existing = Patient.objects.filter(npi__iexact=npi).first() if npi else None
+        if existing is not None and existing.user_id:
             return Response(
                 {"detail": "Ce NPI est déjà enregistré."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -344,6 +350,21 @@ class PatientRegisterView(APIView):
         )
         user.set_unusable_password()
         user.save()
+
+        if existing is not None:
+            basculees = activate_patient_application(existing, user)
+            log_action(request, "register", target=f"patient:{phone}|dossier:{existing.id}")
+            payload = patient_payload(user, request)
+            payload["dossier_lie"] = True
+            payload["demandes_basculees"] = basculees
+            payload["message"] = (
+                "Votre dossier d'hôpital est relié à ce téléphone. "
+                "Les demandes d'accès extérieures vous sont maintenant adressées."
+                if basculees
+                else "Votre dossier d'hôpital est relié à ce téléphone. "
+                "L'hôpital mère garde l'accès direct pour ses professionnels."
+            )
+            return Response(payload, status=status.HTTP_201_CREATED)
 
         if not npi:
             npi = f"{user.id:010d}"
@@ -376,8 +397,39 @@ class PatientRegisterView(APIView):
         return Response(patient_payload(user, request), status=status.HTTP_201_CREATED)
 
 
+def _publish_id_ocr_to_hub(request, payload: dict) -> None:
+    """Même bus que le scan DotoCard : le téléphone lit la pièce, le hub web préremplit."""
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return
+    if getattr(user, "role", None) in (None, "", "patient"):
+        return
+    from django.utils import timezone as dj_tz
+
+    from cards.pubsub import hub_bus, remember_hub_event
+
+    event = {
+        "type": "patient_id_ocr",
+        "npi": payload.get("npi") or "",
+        "first_name": payload.get("first_name"),
+        "last_name": payload.get("last_name"),
+        "birth_date": payload.get("birth_date"),
+        "birth_place": payload.get("birth_place"),
+        "phone": payload.get("phone"),
+        "address_commune": payload.get("address_commune"),
+        "address_arrondissement": payload.get("address_arrondissement"),
+        "address_quartier": payload.get("address_quartier"),
+        "father_name": payload.get("father_name"),
+        "mother_name": payload.get("mother_name"),
+        "card_type": payload.get("card_type"),
+        "ts": dj_tz.now().isoformat(),
+    }
+    remember_hub_event(user.id, event)
+    hub_bus.publish(user.id, event)
+
+
 class IdCardOcrView(APIView):
-    """OCR CIP / carte CEDEAO - public (inscription)."""
+    """OCR CIP / carte CEDEAO - public (inscription), publié au hub si compte pro."""
 
     permission_classes = [AllowAny]
     parser_classes = [MultiPartParser, FormParser]
@@ -394,51 +446,64 @@ class IdCardOcrView(APIView):
                 {"ok": False, "code": "image_too_large", "detail": "Image trop lourde (max 12 Mo)."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        raw = upload.read()
-        logger.info("OCR upload size=%s name=%s", upload.size, getattr(upload, "name", ""))
-        try:
-            from .id_card_ocr import ocr_id_card
-
-            data = ocr_id_card(raw)
-        except TimeoutError as e:
-            logger.warning("OCR timeout: %s", e)
+        if not _OCR_SLOTS.acquire(blocking=False):
             return Response(
                 {
                     "ok": False,
-                    "code": "ocr_timeout",
-                    "detail": (
-                        "Délai dépassé pendant la lecture OCR. "
-                        "Réessayez avec une photo nette et bien cadrée."
-                    ),
+                    "code": "ocr_busy",
+                    "detail": "Le serveur lit déjà une carte. Réessayez dans un instant.",
                 },
-                status=status.HTTP_504_GATEWAY_TIMEOUT,
-            )
-        except ValueError as e:
-            logger.info("OCR NPI introuvable: %s", e)
-            return Response(
-                {"ok": False, "code": "npi_not_found", "detail": str(e)},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            )
-        except RuntimeError as e:
-            logger.warning("OCR indisponible: %s", e)
-            return Response(
-                {"ok": False, "code": "ocr_unavailable", "detail": str(e)},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        except Exception as e:  # noqa: BLE001
-            logger.exception("OCR erreur inattendue")
-            return Response(
-                {
-                    "ok": False,
-                    "code": "ocr_error",
-                    "detail": f"Lecture impossible : {e}",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        try:
+            raw = upload.read()
+            logger.info("OCR upload size=%s name=%s", upload.size, getattr(upload, "name", ""))
+            try:
+                from .id_card_ocr import ocr_id_card
+
+                data = ocr_id_card(raw)
+            except TimeoutError as e:
+                logger.warning("OCR timeout: %s", e)
+                return Response(
+                    {
+                        "ok": False,
+                        "code": "ocr_timeout",
+                        "detail": (
+                            "Délai dépassé pendant la lecture OCR. "
+                            "Réessayez avec une photo nette et bien cadrée."
+                        ),
+                    },
+                    status=status.HTTP_504_GATEWAY_TIMEOUT,
+                )
+            except ValueError as e:
+                logger.info("OCR NPI introuvable: %s", e)
+                return Response(
+                    {"ok": False, "code": "npi_not_found", "detail": str(e)},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+            except RuntimeError as e:
+                logger.warning("OCR indisponible: %s", e)
+                return Response(
+                    {"ok": False, "code": "ocr_unavailable", "detail": str(e)},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.exception("OCR erreur inattendue")
+                return Response(
+                    {
+                        "ok": False,
+                        "code": "ocr_error",
+                        "detail": f"Lecture impossible : {e}",
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+        finally:
+            _OCR_SLOTS.release()
 
         # Ne pas renvoyer raw_text trop long au client
         payload = {k: v for k, v in data.items() if k != "raw_text"}
         payload["ok"] = True
+        _publish_id_ocr_to_hub(request, payload)
         return Response(payload)
 
 
@@ -702,7 +767,7 @@ class MePhotoView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            validate_identity_photo(uploaded)
+            raw, ext = prepare_identity_photo(uploaded)
         except DjangoValidationError as exc:
             msg = exc.messages[0] if getattr(exc, "messages", None) else str(exc)
             return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
@@ -710,21 +775,23 @@ class MePhotoView(APIView):
         user = request.user
         if user.photo:
             user.photo.delete(save=False)
-        ext = (uploaded.name.rsplit(".", 1)[-1] if "." in uploaded.name else "jpg").lower()
-        if ext not in ("jpg", "jpeg", "png", "webp"):
-            ext = "jpg"
         from django.utils import timezone as dj_tz
 
         stamp = int(dj_tz.now().timestamp())
         filename = f"user_{user.id}_{stamp}.{ext}"
-        user.photo.save(filename, ContentFile(uploaded.read()), save=True)
-
-        patient = getattr(user, "patient", None)
-        if patient is not None:
-            if patient.photo:
-                patient.photo.delete(save=False)
-            uploaded.seek(0)
-            patient.photo.save(f"patient_{patient.id}.{ext}", ContentFile(uploaded.read()), save=True)
+        try:
+            user.photo.save(filename, ContentFile(raw), save=True)
+            patient = getattr(user, "patient", None)
+            if patient is not None:
+                if patient.photo:
+                    patient.photo.delete(save=False)
+                patient.photo.save(f"patient_{patient.id}.{ext}", ContentFile(raw), save=True)
+        except OSError:
+            logger.exception("Echec ecriture photo user=%s", user.id)
+            return Response(
+                {"detail": "Enregistrement de la photo impossible."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         log_action(request, "upload_photo", target=user.username)
         return Response(user_data(user, request))
@@ -837,16 +904,20 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            validate_identity_photo(uploaded)
+            raw, ext = prepare_identity_photo(uploaded)
         except DjangoValidationError as exc:
             msg = exc.messages[0] if getattr(exc, "messages", None) else str(exc)
             return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
         if user.photo:
             user.photo.delete(save=False)
-        ext = (uploaded.name.rsplit(".", 1)[-1] if "." in uploaded.name else "jpg").lower()
-        if ext not in ("jpg", "jpeg", "png", "webp"):
-            ext = "jpg"
-        user.photo.save(f"user_{user.id}.{ext}", ContentFile(uploaded.read()), save=True)
+        try:
+            user.photo.save(f"user_{user.id}.{ext}", ContentFile(raw), save=True)
+        except OSError:
+            logger.exception("Echec ecriture photo admin user=%s", user.id)
+            return Response(
+                {"detail": "Enregistrement de la photo impossible."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         return Response(user_data(user, request))
 
     def get_serializer_context(self):

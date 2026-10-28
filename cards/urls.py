@@ -1,7 +1,14 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from .views import DashboardView, DodoCardViewSet, HubDashboardView, HubEventsView, ScanView
+from .views import (
+    DashboardView,
+    DodoCardViewSet,
+    HubDashboardView,
+    HubEventsView,
+    HubLiveView,
+    ScanView,
+)
 
 router = DefaultRouter()
 router.register("dodocards", DodoCardViewSet, basename="dodocard")
@@ -19,5 +26,6 @@ urlpatterns = [
     path("admin/dashboard/", DashboardView.as_view(), name="dashboard"),
     path("hub/dashboard/", HubDashboardView.as_view(), name="hub-dashboard"),
     path("hub/events/", HubEventsView.as_view(), name="hub-events"),
+    path("hub/live/", HubLiveView.as_view(), name="hub-live"),
 ]
 urlpatterns += router.urls

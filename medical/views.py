@@ -23,6 +23,32 @@ from .serializers import (
 )
 
 
+def _consultation_filled(consultation):
+    return bool(
+        (consultation.diagnostic or "").strip()
+        or (consultation.notes or "").strip()
+        or (consultation.synthese_patient or "").strip()
+    )
+
+
+def _close_linked_appointment(consultation, actor):
+    from notifications.services import publish_appointment
+    from patients.models import Appointment
+
+    appt = consultation.appointment
+    if not appt or not _consultation_filled(consultation):
+        return
+    if appt.statut in (
+        Appointment.Statut.ANNULE,
+        Appointment.Statut.ABSENT,
+        Appointment.Statut.TERMINE,
+    ):
+        return
+    appt.statut = Appointment.Statut.TERMINE
+    appt.save(update_fields=["statut", "updated_at"])
+    publish_appointment(appt, actor=actor, kind="rdv_termine", notify_patient=False)
+
+
 def _assert_section_read(user, section: str):
     if getattr(user, "role", None) == Roles.PATIENT:
         return
@@ -32,26 +58,34 @@ def _assert_section_read(user, section: str):
 
 
 def _assert_patient_consent(request, patient_id):
-    """Bloque lecture section médicale sans grant (sauf admin / patient soi-même)."""
+    """Bloque lecture section médicale sans grant (sauf admin légitime / patient soi-même)."""
     user = request.user
     if getattr(user, "role", None) == Roles.PATIENT:
-        return
-    if getattr(user, "role", None) == Roles.ADMIN:
         return
     if not patient_id:
         return
     from patients.models import Patient
+    from patients.hopital import bypasses_consent
 
     patient = Patient.objects.filter(pk=patient_id).first()
     if patient is None:
         raise PermissionDenied("Patient introuvable.")
+    if getattr(user, "role", None) == Roles.ADMIN and bypasses_consent(user, patient):
+        return
+    if getattr(user, "is_superuser", False) and bypasses_consent(user, patient):
+        return
     grant = has_active_grant(user, patient)
-    if not grant_allows_full(grant):
-        if user.role == Roles.AMBULANCIER:
-            return  # urgence : constantes autorisées
-        raise PermissionDenied(
-            "Consentement patient requis. Demandez l'accès puis attendez la confirmation."
-        )
+    if grant_allows_full(grant):
+        return
+    if user.role == Roles.AMBULANCIER:
+        return  # urgence : constantes autorisées, pas le dossier complet
+    from patients.access import access_expired_for
+
+    if access_expired_for(user, patient):
+        raise PermissionDenied("Cet accès a expiré")
+    raise PermissionDenied(
+        "Consentement requis. Demandez l'accès puis attendez la confirmation."
+    )
 
 
 class PatientScopedMixin:
@@ -68,6 +102,18 @@ class PatientScopedMixin:
             _assert_patient_consent(self.request, patient_id)
             qs = qs.filter(patient_id=patient_id)
         return qs
+
+    def get_object(self):
+        obj = super().get_object()
+        user = self.request.user
+        if getattr(user, "role", None) == Roles.PATIENT:
+            return obj
+        if getattr(user, "role", None) == Roles.PHARMACIEN and obj.__class__.__name__ == "Ordonnance":
+            return obj
+        patient_id = getattr(obj, "patient_id", None)
+        if patient_id and not self.request.query_params.get("patient"):
+            _assert_patient_consent(self.request, patient_id)
+        return obj
 
 
 class RoleOrPatientRead(IsAuthenticated):
@@ -106,8 +152,6 @@ class ConsultationViewSet(PatientScopedMixin, viewsets.ModelViewSet):
         from django.utils import timezone
         from rest_framework.exceptions import ValidationError
 
-        from patients.models import Appointment
-
         user = self.request.user
         data = serializer.validated_data
         attached = set(user.structures.values_list("id", flat=True))
@@ -125,13 +169,7 @@ class ConsultationViewSet(PatientScopedMixin, viewsets.ModelViewSet):
         consultation = serializer.save(
             medecin=user, structure=structure, specialite=specialite, date=date
         )
-        appt = consultation.appointment
-        if appt and appt.statut not in (
-            Appointment.Statut.ANNULE,
-            Appointment.Statut.ABSENT,
-        ):
-            appt.statut = Appointment.Statut.TERMINE
-            appt.save(update_fields=["statut", "updated_at"])
+        _close_linked_appointment(consultation, user)
         med = self.request.user.get_full_name() or self.request.user.username
         notify_patient_dossier_change(
             consultation.patient,
@@ -143,6 +181,22 @@ class ConsultationViewSet(PatientScopedMixin, viewsets.ModelViewSet):
             payload={"kind": "consultation", "consultation_id": consultation.id},
             actor=self.request.user,
         )
+
+    def perform_update(self, serializer):
+        consultation = serializer.save()
+        _close_linked_appointment(consultation, self.request.user)
+        if (consultation.synthese_patient or "").strip():
+            med = self.request.user.get_full_name() or self.request.user.username
+            notify_patient_dossier_change(
+                consultation.patient,
+                title="Synthèse de consultation",
+                body=f"{med} a partagé le compte-rendu de votre consultation.",
+                notif_type=Notification.Type.DOSSIER_UPDATED,
+                event_type="dossier_updated",
+                section="dossier",
+                payload={"kind": "consultation", "consultation_id": consultation.id},
+                actor=self.request.user,
+            )
 
     @action(detail=True, methods=["post"])
     def annuler(self, request, pk=None):

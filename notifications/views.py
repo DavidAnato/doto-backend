@@ -1,21 +1,19 @@
-import json
-import queue
-import time
-
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import AccessToken
 
-from cards.pubsub import hub_bus
+from cards.pubsub import sse_stream
 from core.permissions import Roles
+from core.renderers import EventStreamRenderer
 
 from .models import Notification
 from .serializers import NotificationSerializer
@@ -69,6 +67,7 @@ class UserEventsView(APIView):
 
     authentication_classes = []
     permission_classes = [AllowAny]
+    renderer_classes = [JSONRenderer, EventStreamRenderer]
 
     @csrf_exempt
     def dispatch(self, *args, **kwargs):
@@ -93,28 +92,13 @@ class UserEventsView(APIView):
         user_id = user.id
 
         def stream():
-            q = hub_bus.subscribe(user_id)
-            try:
-                hello = {
-                    "type": "connected",
-                    "user_id": user_id,
-                    "role": role,
-                    "ts": timezone.now().isoformat(),
-                }
-                yield f"data: {json.dumps(hello)}\n\n"
-                while True:
-                    try:
-                        event = q.get(timeout=15)
-                        yield f"data: {json.dumps(event, default=str)}\n\n"
-                    except queue.Empty:
-                        yield f": keepalive {int(time.time())}\n\n"
-                        yield (
-                            "data: "
-                            + json.dumps({"type": "ping", "ts": timezone.now().isoformat()})
-                            + "\n\n"
-                        )
-            finally:
-                hub_bus.unsubscribe(user_id, q)
+            hello = {
+                "type": "connected",
+                "user_id": user_id,
+                "role": role,
+                "ts": timezone.now().isoformat(),
+            }
+            yield from sse_stream(user_id, hello)
 
         response = StreamingHttpResponse(stream(), content_type="text/event-stream")
         response["Cache-Control"] = "no-cache, no-transform"

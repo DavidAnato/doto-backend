@@ -1,7 +1,4 @@
 import io
-import json
-import queue
-import time
 
 import qrcode
 from django.db.models import Count, Q
@@ -11,6 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -19,13 +17,14 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 from audit.utils import log_action
 from core.permissions import IsAdmin, IsProfessional, Roles
+from core.renderers import EventStreamRenderer
 from patients.models import Patient
 from patients.serializers import UrgenceSerializer
 
 from . import services
 from .models import DodoCard
 from .pdf import build_dodocard_pdf
-from .pubsub import hub_bus
+from .pubsub import hub_bus, remember_hub_event, sse_stream, take_hub_events
 from .serializers import DodoCardSerializer, ScanSerializer
 
 
@@ -390,7 +389,45 @@ class ScanView(APIView):
                 {"detail": "Carte révoquée ou expirée.", "statut": card.statut},
                 status=status.HTTP_410_GONE,
             )
-        log_action(request, "scan_dodocard", target=f"card:{card.id}", patient_npi=card.patient.npi)
+        log_action(
+            request,
+            "scan_dodocard",
+            target=f"card:{card.id}|structure:{getattr(request.user, 'structure_principale_id', None) or '-'}",
+            patient_npi=card.patient.npi,
+        )
+
+        from patients.hopital import needs_duration_gate, parse_duration_hours
+
+        duration_hours = parse_duration_hours(request.data)
+        if needs_duration_gate(request.user, card.patient, emergency=emergency) and not duration_hours:
+            event = {
+                "type": "dodocard_scan",
+                "patient_id": card.patient.id,
+                "npi": card.patient.npi,
+                "full_name": card.patient.full_name,
+                "token": token[:12] + "…",
+                "scanned_by": request.user.id,
+                "emergency": False,
+                "consent_required": True,
+                "duration_required": True,
+                "dossier_visible": False,
+                "message": "Indiquez la durée d'accès. Le dossier reste fermé.",
+                "ts": timezone.now().isoformat(),
+            }
+            remember_hub_event(request.user.id, event)
+            hub_bus.publish(request.user.id, event)
+            return Response(
+                {
+                    "patient_id": card.patient.id,
+                    "npi": card.patient.npi,
+                    "full_name": card.patient.full_name,
+                    "consent_required": True,
+                    "duration_required": True,
+                    "dossier_visible": False,
+                    "emergency": False,
+                    "message": "Indiquez la durée d'accès. Le dossier reste fermé.",
+                }
+            )
 
         req = create_access_request(
             requester=request.user,
@@ -400,14 +437,37 @@ class ScanView(APIView):
             dodocard=card,
             emergency=emergency,
             request=request,
+            duration_hours=duration_hours,
         )
 
-        consent_required = req.status == AccessRequest.Status.PENDING
+        waiting_patient = req.status == AccessRequest.Status.PENDING
+        waiting_prior = req.status == AccessRequest.Status.PENDING_PRIOR
+        consent_required = waiting_patient or waiting_prior
         is_emergency = req.status == AccessRequest.Status.EMERGENCY_BYPASS
+        from patients.access import grant_allows_full
 
-        # Toujours notifier le Hub du MÊME pro (user_id) - y compris consent pending
-        # et réutilisation grant/pending (create_access_request ne republie pas alors).
-        # Canal ciblé : pas de broadcast global.
+        full_open = grant_allows_full(req)
+        access_expired = (not full_open) and (not is_emergency) and (not consent_required)
+        hide_dossier = (not full_open) and (not is_emergency)
+        if consent_required and getattr(req, "route", "") == AccessRequest.Route.HOPITAL_MERE:
+            hide_dossier = True
+        if is_emergency:
+            message = "Accès urgence - données critiques uniquement."
+        elif hide_dossier and consent_required and getattr(req, "route", "") == AccessRequest.Route.HOPITAL_MERE:
+            message = "Demande envoyée à l'hôpital mère. Le dossier reste fermé tant qu'elle n'a pas accepté."
+        elif waiting_patient:
+            message = "En attente de confirmation patient…"
+        elif waiting_prior:
+            message = "Le patient a accepté. En attente de l'ancien médecin…"
+        elif getattr(req, "direct_structure", False) and full_open:
+            message = "Accès immédiat — hôpital mère."
+        elif full_open:
+            message = "Accès autorisé."
+        elif access_expired:
+            message = "Cet accès a expiré"
+        else:
+            message = "Le dossier reste fermé."
+
         event = {
             "type": "dodocard_scan",
             "patient_id": card.patient.id,
@@ -418,30 +478,31 @@ class ScanView(APIView):
             "access_request_id": req.id,
             "emergency": is_emergency,
             "consent_required": consent_required,
+            "dossier_visible": not hide_dossier,
+            "access_expired": access_expired,
+            "route": req.route,
+            "message": message,
             "ts": timezone.now().isoformat(),
         }
+        remember_hub_event(request.user.id, event)
         hub_notified = hub_bus.publish(request.user.id, event) > 0
 
-        return Response(
-            {
-                "patient_id": card.patient.id,
-                "npi": card.patient.npi,
-                "urgence": UrgenceSerializer(card.patient).data,
-                "hub_notified": hub_notified,
-                "consent_required": consent_required,
-                "emergency": is_emergency,
-                "access_request": serialize_access_request(req),
-                "message": (
-                    "En attente de confirmation patient…"
-                    if consent_required
-                    else (
-                        "Accès urgence - consentement non requis."
-                        if is_emergency
-                        else "Accès autorisé."
-                    )
-                ),
-            }
-        )
+        payload = {
+            "patient_id": card.patient.id,
+            "npi": card.patient.npi,
+            "full_name": card.patient.full_name,
+            "hub_notified": hub_notified,
+            "consent_required": consent_required,
+            "emergency": is_emergency,
+            "dossier_visible": not hide_dossier,
+            "access_expired": access_expired,
+            "duration_required": False,
+            "access_request": serialize_access_request(req),
+            "message": message,
+        }
+        if is_emergency or not hide_dossier:
+            payload["urgence"] = UrgenceSerializer(card.patient).data
+        return Response(payload)
 
 
 def _authenticate_access_token(raw: str):
@@ -455,6 +516,55 @@ def _authenticate_access_token(raw: str):
         return None
 
 
+def _revalidate_hub_event(user, event: dict) -> dict:
+    """Un événement en cache ne doit pas rouvrir un dossier dont la date de fin est passée."""
+    if not isinstance(event, dict):
+        return event
+    if event.get("type") not in ("dodocard_scan", "access_granted"):
+        return event
+    if event.get("consent_required") or event.get("duration_required"):
+        return event
+    if event.get("access_expired"):
+        return {
+            "type": "access_expired",
+            "patient_id": event.get("patient_id"),
+            "npi": event.get("npi"),
+            "full_name": event.get("full_name"),
+            "message": "Cet accès a expiré",
+            "ts": timezone.now().isoformat(),
+        }
+    patient_id = event.get("patient_id")
+    if not patient_id:
+        return event
+    patient = Patient.objects.filter(pk=patient_id).first()
+    if patient is None:
+        return event
+    from patients.access import can_read_dossier, has_active_grant
+    from patients.models import AccessRequest
+
+    if can_read_dossier(user, patient):
+        return event
+    if event.get("emergency"):
+        grant = has_active_grant(user, patient)
+        if (
+            grant
+            and grant.status == AccessRequest.Status.EMERGENCY_BYPASS
+            and grant.has_active_grant
+        ):
+            opened = dict(event)
+            opened["dossier_visible"] = False
+            opened["message"] = "Accès urgence - données critiques uniquement."
+            return opened
+    return {
+        "type": "access_expired",
+        "patient_id": patient_id,
+        "npi": event.get("npi"),
+        "full_name": event.get("full_name"),
+        "message": "Cet accès a expiré",
+        "ts": timezone.now().isoformat(),
+    }
+
+
 class HubEventsView(APIView):
     """Flux SSE authentifié pour DotoHub.
 
@@ -465,6 +575,8 @@ class HubEventsView(APIView):
 
     authentication_classes = []
     permission_classes = [AllowAny]
+    # JSON + event-stream : sinon DRF répond 406 et EventSource boucle.
+    renderer_classes = [JSONRenderer, EventStreamRenderer]
 
     @csrf_exempt
     def dispatch(self, *args, **kwargs):
@@ -485,35 +597,25 @@ class HubEventsView(APIView):
         user_id = user.id
 
         def stream():
-            q = hub_bus.subscribe(user_id)
-            try:
-                hello = {"type": "connected", "user_id": user_id, "ts": timezone.now().isoformat()}
-                yield f"data: {json.dumps(hello)}\n\n"
-                while True:
-                    try:
-                        event = q.get(timeout=15)
-                        yield f"data: {json.dumps(event, default=str)}\n\n"
-                    except queue.Empty:
-                        # Commentaire + event ping (certains proxies coupent les seuls commentaires)
-                        yield f": keepalive {int(time.time())}\n\n"
-                        yield (
-                            "data: "
-                            + json.dumps(
-                                {
-                                    "type": "ping",
-                                    "ts": timezone.now().isoformat(),
-                                }
-                            )
-                            + "\n\n"
-                        )
-            finally:
-                hub_bus.unsubscribe(user_id, q)
+            hello = {"type": "connected", "user_id": user_id, "ts": timezone.now().isoformat()}
+            yield from sse_stream(user_id, hello)
 
         response = StreamingHttpResponse(stream(), content_type="text/event-stream")
         response["Cache-Control"] = "no-cache, no-transform"
         response["X-Accel-Buffering"] = "no"
         # EventSource cross-origin : corsheaders gère Access-Control-Allow-Origin
         return response
+
+
+class HubLiveView(APIView):
+    """Scans récents du pro connecté. Relève si l'EventSource du site s'est fermé."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if getattr(request.user, "role", None) not in Roles.PROFESSIONALS:
+            return Response({"events": []})
+        return Response({"events": [_revalidate_hub_event(request.user, ev) for ev in take_hub_events(request.user.id)]})
 
 
 class DashboardView(APIView):
@@ -665,8 +767,13 @@ class HubDashboardView(APIView):
                 continue
             seen.add(npi)
             p = Patient.objects.filter(npi=npi).select_related("user").first()
-            if p:
-                recent_patients.append(
+            if p is None:
+                continue
+            from patients.access import can_read_dossier
+
+            if not can_read_dossier(user, p):
+                continue
+            recent_patients.append(
                     {
                         "id": p.id,
                         "npi": p.npi,
@@ -704,6 +811,21 @@ class HubDashboardView(APIView):
             user=user, action__icontains="scan", timestamp__gte=since_7d
         ).count()
 
+        from patients.access import serialize_access_request
+        from patients.models import AccessRequest
+
+        transferts = []
+        if user.role == "medecin":
+            for req in (
+                AccessRequest.objects.filter(
+                    prior_medecin=user,
+                    status=AccessRequest.Status.PENDING_PRIOR,
+                )
+                .select_related("requester", "patient", "structure", "prior_medecin")
+                .order_by("-created_at")[:10]
+            ):
+                transferts.append(serialize_access_request(req))
+
         return Response(
             {
                 "role": user.role,
@@ -717,8 +839,10 @@ class HubDashboardView(APIView):
                     "ordonnances_actives": ordonnances_actives,
                     "scans_7j": scans_7j,
                     "patients_recents": len(recent_patients),
+                    "transferts_pending": len(transferts),
                 },
                 "patients_recents": recent_patients,
+                "transferts_pending": transferts,
                 "genere_le": now,
             }
         )

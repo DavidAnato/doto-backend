@@ -12,6 +12,17 @@ class AccountsConfig(AppConfig):
     verbose_name = "Comptes & structures"
 
     def ready(self):
+        from django.db.backends.signals import connection_created
+
+        def _sqlite_wal(sender, connection, **kwargs):
+            if connection.vendor != "sqlite":
+                return
+            with connection.cursor() as cursor:
+                cursor.execute("PRAGMA journal_mode=WAL;")
+                cursor.execute("PRAGMA busy_timeout=20000;")
+
+        connection_created.connect(_sqlite_wal, dispatch_uid="doto_sqlite_wal")
+
         # Sonde le moteur OCR configuré (Tesseract en prod ; RapidOCR en local).
         def _warm():
             try:

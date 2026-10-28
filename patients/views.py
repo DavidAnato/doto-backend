@@ -1,8 +1,11 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.files.base import ContentFile
 from django.db.models import Max, Q
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -74,8 +77,21 @@ def _urgence_only_payload(patient, role: str, request=None) -> dict:
     return _filter_patient_payload(data, role)
 
 
+def _granted_consent(grant) -> dict:
+    expires = getattr(grant, "grant_expires_at", None) if grant else None
+    return {
+        "required": False,
+        "granted": True,
+        "access_request_id": grant.id if grant else None,
+        "grant_expires_at": expires.isoformat() if expires else None,
+        "direct_structure": bool(grant and getattr(grant, "direct_structure", False)),
+    }
+
+
 class PatientViewSet(viewsets.ModelViewSet):
-    queryset = Patient.objects.select_related("dossier", "assurance", "user").all()
+    queryset = Patient.objects.select_related(
+        "dossier", "assurance", "user", "hopital_mere", "medecin_traitant"
+    ).all()
     permission_classes = [IsProfessional]
     search_fields = ["npi", "nom", "prenom", "telephone"]
     filterset_fields = ["groupe_sanguin", "sexe", "npi_verifie_anip"]
@@ -105,6 +121,13 @@ class PatientViewSet(viewsets.ModelViewSet):
                     target=p.full_name,
                     patient_npi=p.npi,
                 )
+                structure = getattr(request.user, "structure_principale", None)
+                if structure and not p.hopital_mere_id:
+                    p.hopital_mere = structure
+                    p.save(update_fields=["hopital_mere", "updated_at"])
+                    if isinstance(response.data, dict):
+                        response.data["hopital_mere"] = structure.id
+                        response.data["hopital_mere_nom"] = structure.nom
             from notifications.services import publish_patient_list
 
             publish_patient_list(patient_id=patient_id, actor=request.user, kind="created")
@@ -122,67 +145,126 @@ class PatientViewSet(viewsets.ModelViewSet):
         return response
 
     def partial_update(self, request, *args, **kwargs):
+        # Sans partial=True, un PATCH photo seule exige npi/nom/prénom et répond 400.
+        kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
 
     def retrieve(self, request, *args, **kwargs):
+        from patients.hopital import bypasses_consent, etablissement_payload
+
         patient = self.get_object()
         role = request.user.role
         emergency = request.query_params.get("emergency") in ("1", "true", "yes")
+        sid = getattr(request.user, "structure_principale_id", None)
 
-        if role == Roles.ADMIN:
-            log_action(request, "consulter_dossier", target=patient.full_name, patient_npi=patient.npi)
+        if bypasses_consent(request.user, patient):
+            log_action(
+                request,
+                "consulter_dossier",
+                target=f"{patient.full_name}|structure:{sid or '-'}",
+                patient_npi=patient.npi,
+            )
             data = PatientDetailSerializer(patient, context=self.get_serializer_context()).data
             data["consent"] = {"required": False, "granted": True, "admin": True}
+            data["etablissement"] = etablissement_payload(request.user, patient)
             return Response(_filter_patient_payload(data, role))
 
         grant = has_active_grant(request.user, patient)
         if not grant_allows_full(grant):
-            if emergency or role == Roles.AMBULANCIER:
-                from patients.access import create_access_request
+            from patients.access import access_expired_for
 
-                create_access_request(
-                    requester=request.user,
-                    patient=patient,
-                    mode=AccessRequest.Mode.EMERGENCY,
-                    reason="Ouverture urgence",
-                    emergency=True,
-                    request=request,
-                )
+            live_emergency = bool(
+                grant
+                and grant.status == AccessRequest.Status.EMERGENCY_BYPASS
+                and grant.has_active_grant
+            )
+            if live_emergency or emergency or role == Roles.AMBULANCIER:
+                if not live_emergency:
+                    from patients.access import create_access_request
+
+                    create_access_request(
+                        requester=request.user,
+                        patient=patient,
+                        mode=AccessRequest.Mode.EMERGENCY,
+                        reason="Ouverture urgence",
+                        emergency=True,
+                        request=request,
+                    )
                 log_action(
                     request, "consulter_urgence", target=patient.full_name, patient_npi=patient.npi
                 )
                 data = _urgence_only_payload(patient, role, request=request)
                 data["consent"] = {
-                    "required": False,
-                    "granted": True,
+                    "required": True,
+                    "granted": False,
                     "emergency": True,
-                    "message": "Accès urgence - consentement patient non requis.",
+                    "urgence_only": True,
+                    "message": "Accès urgence - données critiques uniquement.",
                 }
+                data["etablissement"] = etablissement_payload(request.user, patient)
                 return Response(data)
 
+            expired = access_expired_for(request.user, patient)
             log_action(
                 request, "consulter_dossier_bloque", target=patient.full_name, patient_npi=patient.npi
             )
-            data = _urgence_only_payload(patient, role, request=request)
+            from patients.hopital import (
+                etablissement_payload,
+                has_structure_direct_access,
+                masked_dossier_payload,
+                patient_controls_external_requests,
+            )
+
             pending = (
                 AccessRequest.objects.filter(
                     requester=request.user,
                     patient=patient,
-                    status=AccessRequest.Status.PENDING,
+                    status__in=(
+                        AccessRequest.Status.PENDING,
+                        AccessRequest.Status.PENDING_PRIOR,
+                    ),
                     expires_at__gt=timezone.now(),
                 )
                 .order_by("-created_at")
                 .first()
             )
+            if (
+                not patient_controls_external_requests(patient)
+                and patient.hopital_mere_id
+                and not has_structure_direct_access(request.user, patient)
+            ):
+                payload = masked_dossier_payload(patient, pending, user=request.user)
+                if expired and not pending:
+                    payload["detail"] = "Cet accès a expiré"
+                    payload["consent"]["expired"] = True
+                    payload["consent"]["message"] = "Cet accès a expiré"
+                    payload["consent"]["can_request"] = True
+                return Response(payload, status=status.HTTP_202_ACCEPTED)
+
+            data = _urgence_only_payload(patient, role, request=request)
             can_request = role in FULL_ACCESS_REQUEST_ROLES
+            controls = patient_controls_external_requests(patient)
             if pending:
+                waiting_prior = pending.status == AccessRequest.Status.PENDING_PRIOR
+                waiting_hopital = pending.route == AccessRequest.Route.HOPITAL_MERE
                 consent = {
                     "required": True,
                     "granted": False,
                     "pending": True,
+                    "awaiting_prior": waiting_prior,
+                    "awaiting_hopital_mere": waiting_hopital,
+                    "route": pending.route,
                     "can_request": can_request,
                     "access_request_id": pending.id,
-                    "message": "En attente de confirmation patient…",
+                    "message": (
+                        "Le patient a accepté. En attente de confirmation de l'ancien médecin…"
+                        if waiting_prior
+                        else (
+                            "Demande envoyée à l'hôpital mère. Le dossier reste fermé."
+                            if waiting_hopital
+                            else "En attente de confirmation patient…"
+                        )
+                    ),
                 }
             else:
                 consent = {
@@ -190,36 +272,51 @@ class PatientViewSet(viewsets.ModelViewSet):
                     "granted": False,
                     "pending": False,
                     "can_request": can_request,
-                    "message": "Infos de base uniquement. Demandez l'accès complet pour le dossier.",
+                    "route": "patient" if controls else "hopital_mere",
+                    "needs_duration": not controls and bool(patient.hopital_mere_id),
+                    "message": (
+                        "Infos de base uniquement. Demandez l'accès complet pour le dossier."
+                        if controls
+                        else "Dossier fermé. Indiquez la durée : la demande part à l'hôpital mère."
+                    ),
                 }
+            if expired and not pending:
+                consent["expired"] = True
+                consent["message"] = "Cet accès a expiré"
+            data["etablissement"] = etablissement_payload(request.user, patient)
             return Response(
                 {
                     **data,
-                    "detail": "Consentement patient requis pour le dossier complet.",
+                    "detail": consent.get("message") if expired and not pending else "Consentement requis pour le dossier complet.",
                     "consent": consent,
                 },
                 status=status.HTTP_202_ACCEPTED,
             )
 
-        log_action(request, "consulter_dossier", target=patient.full_name, patient_npi=patient.npi)
+        action_name = (
+            "ouverture_dossier" if getattr(grant, "direct_structure", False) else "consulter_dossier"
+        )
+        sid = getattr(request.user, "structure_principale_id", None)
+        log_action(
+            request,
+            action_name,
+            target=f"{patient.full_name}|structure:{sid or '-'}",
+            patient_npi=patient.npi,
+        )
+        from patients.hopital import etablissement_payload
+
         if role in (Roles.LABORANTIN, Roles.AMBULANCIER, Roles.RECEPTIONNISTE, Roles.PHARMACIEN):
             data = PatientListSerializer(patient, context=self.get_serializer_context()).data
             data["urgence"] = UrgenceSerializer(patient).data
             if role_can(role, "assurance"):
                 assurance = getattr(patient, "assurance", None)
                 data["assurance"] = AssuranceSerializer(assurance).data if assurance else None
-            data["consent"] = {
-                "required": False,
-                "granted": True,
-                "access_request_id": grant.id if grant else None,
-            }
+            data["consent"] = _granted_consent(grant)
+            data["etablissement"] = etablissement_payload(request.user, patient)
             return Response(_filter_patient_payload(data, role))
         data = PatientDetailSerializer(patient, context=self.get_serializer_context()).data
-        data["consent"] = {
-            "required": False,
-            "granted": True,
-            "access_request_id": grant.id if grant else None,
-        }
+        data["consent"] = _granted_consent(grant)
+        data["etablissement"] = etablissement_payload(request.user, patient)
         return Response(_filter_patient_payload(data, role))
 
     @action(detail=False, methods=["get"])
@@ -240,8 +337,156 @@ class PatientViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         log_action(request, "recherche_patient", target=npi or nom)
+        from patients.hopital import (
+            bypasses_consent,
+            has_structure_direct_access,
+            patient_controls_external_requests,
+        )
+
+        patients = list(qs[:50])
+        rows = PatientListSerializer(
+            patients, many=True, context=self.get_serializer_context()
+        ).data
+        for row, patient in zip(rows, patients):
+            if bypasses_consent(request.user, patient) or patient_controls_external_requests(patient):
+                continue
+            if has_structure_direct_access(request.user, patient):
+                continue
+            if has_active_grant(request.user, patient):
+                continue
+            row["groupe_sanguin"] = ""
+            row["electrophorese"] = ""
+            row["dossier_masque"] = True
+        return Response(rows)
+
+    @action(detail=True, methods=["post"], url_path="emettre-carte")
+    def emettre_carte(self, request, pk=None):
+        """Accueil ou admin de l'hôpital mère : émet la DotoCard si le dossier est prêt."""
+        from cards.models import DodoCard
+        from cards.serializers import DodoCardSerializer
+        from cards.views import _active_card, _ensure_ready_for_issue
+        from patients.hopital import DESK_ROLES, user_structure_id
+
+        patient = self.get_object()
+        sid = user_structure_id(request.user)
+        if request.user.role not in DESK_ROLES or not sid or sid != patient.hopital_mere_id:
+            raise PermissionDenied(
+                "Seuls l'accueil et l'admin de l'hôpital mère peuvent émettre la DotoCard."
+            )
+        active = _active_card(patient)
+        if active:
+            return Response(DodoCardSerializer(active).data)
+        blocked = _ensure_ready_for_issue(patient)
+        if blocked is not None:
+            return blocked
+        card = DodoCard.issue(patient)
+        log_action(request, "emettre_dodocard", target=f"card:{card.id}", patient_npi=patient.npi)
+        return Response(DodoCardSerializer(card).data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="photo",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def photo(self, request, pk=None):
+        """Photo d'identité du patient (accueil). Même contrôle que la photo de compte."""
+        if not role_can_write(request.user.role, "demographie"):
+            raise PermissionDenied("Modification démographique non autorisée pour ce rôle.")
+        from accounts.photo_utils import patient_photo_url, prepare_identity_photo
+
+        patient = self.get_object()
+        uploaded = request.FILES.get("photo") or request.FILES.get("file") or request.FILES.get("image")
+        if not uploaded:
+            return Response(
+                {"detail": "Fichier « photo » requis (multipart)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            raw, ext = prepare_identity_photo(uploaded)
+        except DjangoValidationError as exc:
+            msg = exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+            return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
+        stamp = int(timezone.now().timestamp())
+        filename = f"patient_{patient.id}_{stamp}.{ext}"
+        try:
+            if patient.photo:
+                patient.photo.delete(save=False)
+            patient.photo.save(filename, ContentFile(raw), save=True)
+        except OSError:
+            return Response(
+                {"detail": "Enregistrement de la photo impossible."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        log_action(request, "upload_photo_patient", target=patient.full_name, patient_npi=patient.npi)
         return Response(
-            PatientListSerializer(qs, many=True, context=self.get_serializer_context()).data
+            {
+                "id": patient.id,
+                "photo_url": patient_photo_url(patient, request=request),
+            }
+        )
+
+    @action(detail=True, methods=["get"], url_path="medecins-referents")
+    def medecins_referents(self, request, pk=None):
+        from patients.hopital import DESK_ROLES, user_structure_id
+
+        patient = self.get_object()
+        sid = user_structure_id(request.user)
+        if request.user.role not in DESK_ROLES or not sid or sid != patient.hopital_mere_id:
+            raise PermissionDenied("Réservé à l'accueil de l'hôpital mère.")
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        qs = User.objects.filter(
+            role=Roles.MEDECIN, actif=True, structure_principale_id=patient.hopital_mere_id
+        ).order_by("last_name", "first_name")
+        return Response(
+            [
+                {"id": u.id, "full_name": u.get_full_name() or u.username}
+                for u in qs[:100]
+            ]
+        )
+
+    @action(detail=True, methods=["post"], url_path="medecin-referent")
+    def medecin_referent(self, request, pk=None):
+        from django.contrib.auth import get_user_model
+
+        from patients.hopital import DESK_ROLES, user_structure_id
+
+        patient = self.get_object()
+        sid = user_structure_id(request.user)
+        if request.user.role not in DESK_ROLES or not sid or sid != patient.hopital_mere_id:
+            raise PermissionDenied("Réservé à l'accueil de l'hôpital mère.")
+        raw = request.data.get("medecin_id")
+        if raw in (None, "", 0, "0"):
+            patient.medecin_traitant = None
+            patient.save(update_fields=["medecin_traitant", "updated_at"])
+            return Response({"medecin_referent_id": None, "medecin_referent_nom": None})
+        User = get_user_model()
+        medecin = User.objects.filter(
+            pk=raw,
+            role=Roles.MEDECIN,
+            actif=True,
+            structure_principale_id=patient.hopital_mere_id,
+        ).first()
+        if medecin is None:
+            return Response(
+                {"detail": "Médecin introuvable dans l'hôpital mère."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        patient.medecin_traitant = medecin
+        patient.save(update_fields=["medecin_traitant", "updated_at"])
+        log_action(
+            request,
+            "designer_medecin_referent",
+            target=medecin.get_full_name() or medecin.username,
+            patient_npi=patient.npi,
+        )
+        return Response(
+            {
+                "medecin_referent_id": medecin.id,
+                "medecin_referent_nom": medecin.get_full_name() or medecin.username,
+            }
         )
 
     @action(detail=False, methods=["get"])
@@ -276,7 +521,11 @@ class PatientViewSet(viewsets.ModelViewSet):
             .values_list("patient_id", flat=True)[:limit]
         )
 
-        access_ids = list(
+        access_ids: list[int] = []
+        from patients.access import expire_stale_requests
+
+        expire_stale_requests(requester=user)
+        for req in (
             AccessRequest.objects.filter(
                 requester=user,
                 status__in=(
@@ -284,11 +533,16 @@ class PatientViewSet(viewsets.ModelViewSet):
                     AccessRequest.Status.EMERGENCY_BYPASS,
                 ),
             )
-            .values("patient_id")
-            .annotate(last=Max("created_at"))
-            .order_by("-last")
-            .values_list("patient_id", flat=True)[:limit]
-        )
+            .order_by("-created_at")[: limit * 3]
+        ):
+            if req.status == AccessRequest.Status.EMERGENCY_BYPASS:
+                continue
+            if not req.has_active_grant:
+                continue
+            if req.patient_id and req.patient_id not in access_ids:
+                access_ids.append(req.patient_id)
+            if len(access_ids) >= limit:
+                break
 
         priority_ids: list[int] = []
         for pid in list(seen_ids) + list(access_ids):
@@ -518,41 +772,108 @@ class MonDossierView(viewsets.ViewSet):
         return Response(out)
 
     def historique(self, request):
-        """Agrégat consultations + ordonnances + examens pour le patient connecté."""
+        """Patient : consultations (synthèse), ses ordonnances et ses examens.
+
+        Les notes privées du médecin restent hors de cette réponse. Ordonnances,
+        résultats et bons sont limités au dossier du compte connecté.
+        """
         patient = getattr(request.user, "patient", None)
         if patient is None:
             return Response({"detail": "Aucun dossier."}, status=status.HTTP_404_NOT_FOUND)
+
+        qs = (
+            patient.consultations.filter(annule=False)
+            .select_related("structure", "medecin")
+            .order_by("-date")[:50]
+        )
+        syntheses = []
+        for c in qs:
+            med = ""
+            if c.medecin:
+                med = c.medecin.get_full_name() or c.medecin.username or ""
+                if med and not med.lower().startswith("dr"):
+                    med = f"Dr {med}"
+            synthese = (c.synthese_patient or "").strip()
+            if not synthese:
+                bits = [c.get_type_display() or "Consultation"]
+                if c.specialite:
+                    bits.append(c.specialite)
+                if med:
+                    bits.append(f"avec {med}")
+                if c.structure:
+                    bits.append(f"à {c.structure.nom}")
+                if c.motif:
+                    bits.append(f"Motif : {c.motif}.")
+                synthese = " ".join(bits)
+            syntheses.append(
+                {
+                    "id": c.id,
+                    "date": c.date.isoformat() if c.date else None,
+                    "type": c.type,
+                    "type_label": c.get_type_display(),
+                    "specialite": c.specialite,
+                    "motif": c.motif,
+                    "medecin_nom": med,
+                    "structure_nom": c.structure.nom if c.structure else "",
+                    "titre": (
+                        " - ".join(
+                            p
+                            for p in [
+                                (c.specialite or "").strip() or "Consultation",
+                                med,
+                                c.structure.nom if c.structure else "",
+                                c.date.strftime("%d/%m/%Y") if c.date else "",
+                            ]
+                            if p
+                        )
+                    ),
+                    "synthese": synthese,
+                    "has_synthese": bool((c.synthese_patient or "").strip()),
+                }
+            )
+
         from medical.serializers import (
             BonExamenSerializer,
-            ConsultationSerializer,
             ExamenSerializer,
             OrdonnanceSerializer,
         )
 
+        ctx = {"request": request}
+        ordo_qs = (
+            patient.ordonnances.select_related("medecin", "patient", "structure")
+            .prefetch_related("medicaments")
+            .order_by("-date", "-id")[:50]
+        )
+        # Même filtre que le hub : les examens annulés ne figurent pas dans la file.
+        exam_qs = (
+            patient.examens.select_related(
+                "laborantin", "patient", "medecin_prescripteur", "bon"
+            )
+            .filter(annule=False)
+            .order_by("-date", "-id")[:50]
+        )
+        bon_qs = (
+            patient.bons_examen.select_related(
+                "patient", "medecin", "structure", "laboratoire"
+            )
+            .prefetch_related("lignes", "resultats")
+            .order_by("-created_at", "-id")[:50]
+        )
+        ordonnances = OrdonnanceSerializer(ordo_qs, many=True, context=ctx).data
+        examens = ExamenSerializer(exam_qs, many=True, context=ctx).data
+        bons = BonExamenSerializer(bon_qs, many=True, context=ctx).data
+
         return Response(
             {
-                "consultations": ConsultationSerializer(
-                    patient.consultations.select_related("structure", "medecin").all()[:50],
-                    many=True,
-                ).data,
-                "ordonnances": OrdonnanceSerializer(
-                    patient.ordonnances.select_related("medecin", "structure")
-                    .prefetch_related("medicaments")
-                    .all()[:50],
-                    many=True,
-                ).data,
-                "examens": ExamenSerializer(
-                    patient.examens.filter(annule=False)[:50],
-                    many=True,
-                    context={"request": request},
-                ).data,
-                "bons_examen": BonExamenSerializer(
-                    patient.bons_examen.select_related("medecin", "structure", "laboratoire")
-                    .prefetch_related("lignes", "resultats")
-                    .all()[:50],
-                    many=True,
-                    context={"request": request},
-                ).data,
+                "syntheses": syntheses,
+                "consultations": syntheses,
+                "ordonnances": ordonnances,
+                "examens": examens,
+                "bons_examen": bons,
+                "message": (
+                    "Vous voyez la date et le type de chaque visite, "
+                    "ainsi que la synthèse rédigée pour vous par le médecin le cas échéant."
+                ),
             }
         )
 

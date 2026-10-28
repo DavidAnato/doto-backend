@@ -151,6 +151,7 @@ else:
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / "db.sqlite3",
+            "OPTIONS": {"timeout": 20},
         }
     }
 
@@ -179,7 +180,9 @@ if _HAS_WHITENOISE:
             "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
         },
     }
-MEDIA_URL = "media/"
+# Slash initial obligatoire : sinon build_absolute_uri colle « media/… »
+# à l'URL de la vue (/api/auth/me/media/…) et l'image ne charge pas.
+MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 PUBLIC_API_BASE = env(
     "PUBLIC_API_BASE",
@@ -294,7 +297,9 @@ BRAND = "DOTO+"
 CARD_PRODUCT = "DotoCard"
 
 ACCESS_REQUEST_TTL_MINUTES = int(env("ACCESS_REQUEST_TTL_MINUTES", "10"))
-ACCESS_GRANT_TTL_MINUTES = int(env("ACCESS_GRANT_TTL_MINUTES", "60"))
+ACCESS_PRIOR_TTL_MINUTES = int(env("ACCESS_PRIOR_TTL_MINUTES", str(24 * 60)))  # médecin traitant
+ACCESS_GRANT_TTL_MINUTES = int(env("ACCESS_GRANT_TTL_MINUTES", "60"))  # legacy / compat
+ACCESS_STALE_MINUTES = int(env("ACCESS_STALE_MINUTES", str(12 * 60)))  # PIN si dernière ouverture > 12h
 ACCESS_EMERGENCY_GRANT_TTL_MINUTES = int(env("ACCESS_EMERGENCY_GRANT_TTL_MINUTES", "30"))
 
 EXPO_ACCESS_TOKEN = env("EXPO_ACCESS_TOKEN", "")

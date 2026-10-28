@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from django.contrib.auth import get_user_model
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -14,6 +14,8 @@ from audit.utils import log_action
 from core.permissions import Roles, role_can, role_can_write
 from notifications.models import Notification
 from notifications.services import notify_patient_dossier_change, notify_user, publish_appointment
+
+from medical.models import Consultation
 
 from .models import Appointment
 from .serializers import AppointmentSerializer
@@ -45,6 +47,12 @@ class AppointmentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Appointment.objects.select_related(
             "patient", "structure", "professionnel", "created_by"
+        ).prefetch_related(
+            Prefetch(
+                "consultations",
+                queryset=Consultation.objects.filter(annule=False),
+                to_attr="_consults",
+            )
         ).all()
         user = self.request.user
         if user.role == Roles.PATIENT:
@@ -298,33 +306,11 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             diagnostic="",
             notes="",
         )
-        appt.statut = Appointment.Statut.TERMINE
-        appt.save(update_fields=["statut", "updated_at"])
         log_action(
             request,
             "demarrer_consultation",
             target=f"rdv:{appt.id}",
             patient_npi=appt.patient.npi,
-        )
-        publish_appointment(
-            _reload_appt(appt.pk),
-            actor=user,
-            kind="rdv_termine",
-            notify_patient=False,
-        )
-        notify_patient_dossier_change(
-            appt.patient,
-            title="Consultation démarrée",
-            body="Votre rendez-vous a été transformé en consultation.",
-            notif_type=Notification.Type.DOSSIER_UPDATED,
-            event_type="dossier_updated",
-            section="dossier",
-            payload={
-                "kind": "consultation",
-                "consultation_id": consultation.id,
-                "appointment_id": appt.id,
-            },
-            actor=user,
         )
         return Response(
             ConsultationSerializer(consultation).data, status=status.HTTP_201_CREATED

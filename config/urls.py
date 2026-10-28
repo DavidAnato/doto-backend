@@ -1,7 +1,7 @@
 """Routage racine de l'API DOTO+."""
 from django.conf import settings
-from django.conf.urls.static import static
-from django.urls import include, path
+from django.urls import include, path, re_path
+from django.views.static import serve
 
 # Aucun import de vues / admin.site.urls ici : tout passe par include("…")
 # en chaîne. Pendant le chargement de ce module le verrou _ModuleLock('config.urls')
@@ -18,5 +18,8 @@ urlpatterns = [
     path("api/", include("notifications.urls")),
 ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# DEBUG=False en prod : static() ne monte pas /media/, les photos 404
+# derrière le worker Cloudflare. Pas de nginx sur :8003.
+urlpatterns += [
+    re_path(r"^media/(?P<path>.*)$", serve, {"document_root": settings.MEDIA_ROOT}),
+]

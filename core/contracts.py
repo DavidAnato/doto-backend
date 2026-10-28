@@ -133,11 +133,9 @@ AFFILIATION_STATUTS = [
 # Rôles pro qui doivent rattacher au moins un hôpital + un principal.
 HOSPITAL_REQUIRED_ROLES = (
     "medecin",
-    "infirmier",
     "pharmacien",
     "laborantin",
     "ambulancier",
-    "receptionniste",
 )
 # Payloads notification : toujours JSON plat + ids.
 # type (Notification.Type) + payload.kind déterminent le deep-link client.
@@ -180,6 +178,7 @@ SSE_EVENT_TYPES = {
     "access_expired": "Demande expirée",
     "access_revoked": "Accès révoqué",
     "dodocard_scan": "Scan DotoCard (même compte pro)",
+    "patient_id_ocr": "OCR CIP / CEDEAO (même compte pro → formulaire nouveau patient)",
 }
 
 # kind → même routing (payload.kind prioritaire si présent)

@@ -9,9 +9,17 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from accounts.models import StructureSante
+from accounts.models import AffiliationPro, KycDossier, StructureSante
 from cards.models import DodoCard
-from medical.models import Consultation, ConstanteVitale, Examen, Medicament, Ordonnance
+from medical.models import (
+    BonExamen,
+    BonExamenLigne,
+    Consultation,
+    ConstanteVitale,
+    Examen,
+    Medicament,
+    Ordonnance,
+)
 from patients.models import Assurance, DossierMedical, Patient
 
 User = get_user_model()
@@ -34,8 +42,11 @@ Mot de passe (tous les pros / admin) : mdp123
 OTP (00000 en mock) : login / inscription patient
 PIN session pro : 1234
 
-Admin
+Admin structure (aussi Django /admin/)
   admin / mdp123
+
+Super admin
+  superadmin / mdp123
 
 Médecins
   medecin  / mdp123
@@ -132,6 +143,7 @@ class Command(BaseCommand):
         DEMO_PWD = "mdp123"
         accounts = [
             ("admin", "Awa", "GNONLONFOUN", User.Role.ADMIN, DEMO_PWD, cnhu),
+            ("superadmin", "Sena", "BOKO", User.Role.ADMIN, DEMO_PWD, cnhu),
             ("medecin", "Rosine", "FANOU", User.Role.MEDECIN, DEMO_PWD, cnhu),
             ("medecin2", "Jean", "HOUNKPE", User.Role.MEDECIN, DEMO_PWD, cocotiers),
             ("medecin3", "Fatou", "DOSSOU", User.Role.MEDECIN, DEMO_PWD, cnhu),
@@ -166,9 +178,15 @@ class Command(BaseCommand):
             user.structure_principale = structure
             user.first_name = prenom
             user.last_name = nom
-            if role == User.Role.ADMIN:
+            # Django /admin/ : admin et superadmin restent staff + superuser.
+            # Un reseed ne doit pas retirer ces flags au compte admin.
+            if username in ("admin", "superadmin"):
                 user.is_staff = True
                 user.is_superuser = True
+                user.is_active = True
+            elif role == User.Role.ADMIN:
+                user.is_staff = False
+                user.is_superuser = False
             user.save()
             if not user.has_pin or not user.check_pin("1234"):
                 user.set_pin("1234")
@@ -179,9 +197,45 @@ class Command(BaseCommand):
             created_users[username] = user
             ensure_placeholder_photo(user, initials=f"{prenom[:1]}{nom[:1]}".upper() or "P")
 
+            # Affiliation pro validée (catalogue) + KYC pro validé
+            if role != User.Role.ADMIN:
+                kind = AffiliationPro.Kind.ETABLISSEMENT
+                if role == User.Role.PHARMACIEN:
+                    kind = AffiliationPro.Kind.PHARMACIE
+                elif role == User.Role.LABORANTIN:
+                    kind = AffiliationPro.Kind.LABORATOIRE
+                AffiliationPro.objects.update_or_create(
+                    user=user,
+                    structure=structure,
+                    defaults=dict(
+                        kind=kind,
+                        ville=getattr(structure, "localisation", "") or "Cotonou",
+                        nom_etablissement=structure.nom,
+                        numero_autorisation=f"AUT-{username.upper()}-BJ",
+                        numero_ordre=f"ON/{username.upper()}/2024",
+                        email_pro=f"{username}@doto.bj",
+                        ligne_pro="+229 01 00 00 00",
+                        principal=True,
+                        statut=AffiliationPro.Statut.VALIDE,
+                    ),
+                )
+                KycDossier.objects.update_or_create(
+                    user=user,
+                    defaults=dict(
+                        subject=KycDossier.Subject.PROFESSIONNEL,
+                        statut=KycDossier.Statut.VALIDE,
+                        nom=nom,
+                        prenom=prenom,
+                        telephone=user.telephone or "",
+                        submitted_at=timezone.now(),
+                        reviewed_at=timezone.now(),
+                    ),
+                )
+
         medecin = created_users["medecin"]
         infirmier = created_users["infirmier"]
         laborantin = created_users["laborantin"]
+        admin_user = created_users["admin"]
 
         # ─── Patients mobiles ─────────────────────────────────────────────
         patients_data = [
@@ -329,8 +383,8 @@ class Command(BaseCommand):
                     assureur="NSIA Bénin",
                     num_police=f"NSIA-2024-BJ-{pdata['npi'][-7:]}",
                     type_couverture="Famille" if pdata["full"] else "Individuel",
-                    valide_du=date(2025, 1, 1),
-                    valide_au=date(2025, 12, 31),
+                    valide_du=date(2026, 1, 1),
+                    valide_au=date(2027, 12, 31),
                     droits_valides=True,
                     garanties=Assurance.garanties_par_defaut(),
                 ),
@@ -339,6 +393,25 @@ class Command(BaseCommand):
             if not patient.dodocards.filter(statut=DodoCard.Statut.ACTIVE).exists():
                 DodoCard.issue(patient, cvv="482")
 
+            # KYC patient validé (démo prête à l'emploi)
+            KycDossier.objects.update_or_create(
+                user=patient_user,
+                defaults=dict(
+                    subject=KycDossier.Subject.PATIENT,
+                    statut=KycDossier.Statut.VALIDE,
+                    nom=pdata["nom"],
+                    prenom=pdata["prenom"],
+                    date_naissance=pdata["naissance"],
+                    lieu_naissance="Cotonou",
+                    npi=pdata["npi"],
+                    telephone=pdata["phone"],
+                    sexe=pdata["sexe"],
+                    submitted_at=timezone.now(),
+                    reviewed_at=timezone.now(),
+                    reviewed_by=admin_user,
+                ),
+            )
+
             if pdata["full"]:
                 main_patient = patient
 
@@ -346,34 +419,77 @@ class Command(BaseCommand):
         if patient is None:
             patient = Patient.objects.get(npi="1200478821")
 
+        # Médecin traitant démo
+        if patient.medecin_traitant_id != medecin.id:
+            patient.medecin_traitant = medecin
+            patient.save(update_fields=["medecin_traitant", "updated_at"])
+
+        # Enrichir consultations existantes (spécialité / motif / partage synthèse)
+        for c in patient.consultations.filter(specialite=""):
+            c.specialite = "Médecine générale"
+            if not c.motif:
+                c.motif = c.diagnostic[:120] if c.diagnostic else "Consultation"
+            c.save(update_fields=["specialite", "motif"])
+
+        # Partager 2 synthèses démo si aucune n'est encore partagée
+        if not patient.consultations.filter(shared_with_patient=True).exists():
+            for c in patient.consultations.order_by("-date")[:2]:
+                c.shared_with_patient = True
+                if not c.synthese_patient:
+                    c.synthese_patient = (
+                        f"Synthèse du {(c.date.date() if c.date else '')}: "
+                        f"{c.diagnostic or c.motif or 'Consultation'}. "
+                        f"{(c.notes or '')[:180]}".strip()
+                    )
+                c.save(update_fields=["shared_with_patient", "synthese_patient"])
+
         # ─── Dossier médical complet (patient principal) ──────────────────
         if not patient.consultations.exists():
             c1 = Consultation.objects.create(
                 patient=patient,
                 structure=cocotiers,
                 medecin=medecin,
-                date=timezone.make_aware(datetime(2025, 6, 12, 9, 0)),
+                date=timezone.make_aware(datetime(2026, 6, 12, 9, 0)),
                 type=Consultation.Type.CONSULTATION,
+                specialite="Médecine générale",
+                motif="Contrôle tension",
                 diagnostic="Tension artérielle - HTA confirmée",
                 notes="PA 155/95 mmHg. Amlodipine 5 mg. Contrôle dans 3 semaines.",
+                shared_with_patient=True,
+                synthese_patient=(
+                    "Contrôle tension du 12/06/2026 : HTA confirmée. "
+                    "Traitement Amlodipine 5 mg le matin. Contrôle dans 3 semaines. "
+                    "Régime hyposodé recommandé."
+                ),
             )
             Consultation.objects.create(
                 patient=patient,
                 structure=cnhu,
                 medecin=medecin,
-                date=timezone.make_aware(datetime(2025, 4, 3, 10, 30)),
-                type=Consultation.Type.CONSULTATION,
+                date=timezone.make_aware(datetime(2026, 4, 3, 10, 30)),
+                type=Consultation.Type.SUIVI,
+                specialite="Médecine générale",
+                motif="Suivi diabète",
                 diagnostic="Suivi diabète type 2 - glycémie stable",
                 notes="HbA1c 7.2%. Metformine 500 mg maintenue.",
+                shared_with_patient=True,
+                synthese_patient=(
+                    "Suivi diabète du 03/04/2026 : glycémie stable. "
+                    "Metformine 500 mg maintenue. Prochain bilan HbA1c prévu."
+                ),
             )
             Consultation.objects.create(
                 patient=patient,
                 structure=cnhu,
                 medecin=medecin,
-                date=timezone.make_aware(datetime(2025, 1, 15, 8, 0)),
+                date=timezone.make_aware(datetime(2026, 1, 15, 8, 0)),
                 type=Consultation.Type.HOSPITALISATION,
+                specialite="Chirurgie générale",
+                motif="Douleur abdominale",
                 diagnostic="Hospitalisation - appendicite aiguë",
                 notes="Appendicectomie laparoscopique. Sortie le 18/01.",
+                shared_with_patient=False,
+                synthese_patient="",
             )
 
             o1 = Ordonnance.objects.create(
@@ -381,30 +497,38 @@ class Command(BaseCommand):
                 medecin=medecin,
                 structure=pharma_abc,
                 consultation=c1,
-                date=date(2025, 6, 12),
+                date=date(2026, 6, 12),
                 statut=Ordonnance.Statut.ACTIVE,
                 instructions="Prendre le matin. Régime hyposodé.",
             )
             Medicament.objects.create(
                 ordonnance=o1,
-                nom="Amlodipine 5mg",
-                dosage="1 comprimé",
-                frequence="Une fois par jour",
+                nom="Amlodipine",
+                dosage="5 mg",
+                forme="comprimé",
+                quantite="1 boîte",
+                unites_par_prise="1",
+                frequence_par_jour="1/jour",
                 duree_jours=30,
+                moment="matin",
             )
             o2 = Ordonnance.objects.create(
                 patient=patient,
                 medecin=medecin,
                 structure=cnhu,
-                date=date(2025, 4, 3),
-                statut=Ordonnance.Statut.ACTIVE,
+                date=date(2026, 4, 3),
+                statut=Ordonnance.Statut.PAYEE,
             )
             Medicament.objects.create(
                 ordonnance=o2,
-                nom="Metformine 500mg",
-                dosage="2 comprimés",
-                frequence="Deux fois par jour",
+                nom="Metformine",
+                dosage="500 mg",
+                forme="comprimé",
+                quantite="1 boîte",
+                unites_par_prise="2",
+                frequence_par_jour="2/jour",
                 duree_jours=30,
+                moment="pendant les repas",
             )
 
             Examen.objects.create(
@@ -414,7 +538,7 @@ class Command(BaseCommand):
                 laboratoire="Labo Bénin-Santé",
                 laborantin=laborantin,
                 medecin_prescripteur=medecin,
-                date=date(2025, 6, 5),
+                date=date(2026, 6, 5),
                 statut=Examen.Statut.NORMAL,
                 resultat_texte="Paramètres dans les normes.",
             )
@@ -425,7 +549,7 @@ class Command(BaseCommand):
                 laboratoire="CNHU Cotonou",
                 laborantin=laborantin,
                 medecin_prescripteur=medecin,
-                date=date(2025, 4, 3),
+                date=date(2026, 4, 3),
                 statut=Examen.Statut.ELEVE,
                 resultat_texte="6.8 mmol/L.",
             )
@@ -438,6 +562,29 @@ class Command(BaseCommand):
                 temperature=37.0,
                 poids=78.5,
                 glycemie=6.80,
+            )
+
+        # Bon d'examen en attente côté labo (démo workflow) - idempotent
+        if not BonExamen.objects.filter(patient=patient).exists():
+            bon = BonExamen.objects.create(
+                patient=patient,
+                medecin=medecin,
+                structure=cnhu,
+                laboratoire=labo_bs,
+                laboratoire_nom=labo_bs.nom,
+                motif="Bilan de contrôle HTA / diabète",
+                observations="À jeun.",
+                statut=BonExamen.Statut.DEMANDE,
+            )
+            BonExamenLigne.objects.create(
+                bon=bon,
+                type_examen="NFS complète",
+                categorie=Examen.Categorie.ANALYSES,
+            )
+            BonExamenLigne.objects.create(
+                bon=bon,
+                type_examen="Créatininémie",
+                categorie=Examen.Categorie.ANALYSES,
             )
 
         n_pros = User.objects.filter(

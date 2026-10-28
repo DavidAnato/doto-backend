@@ -93,6 +93,31 @@ class Patient(models.Model):
     contact_urgence_lien = models.CharField(max_length=60, blank=True)
     tel_urgence = models.CharField(max_length=30, blank=True)
 
+    # Médecin traitant (transfert d'accès / double validation)
+    medecin_traitant = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="patients_suivis",
+        help_text="Médecin traitant actuel — co-valide les transferts d'accès.",
+    )
+    # Structure créatrice : accès direct de ses professionnels.
+    hopital_mere = models.ForeignKey(
+        "accounts.StructureSante",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="patients_hopital_mere",
+        help_text="Hôpital mère (structure qui a créé le dossier).",
+    )
+    app_activee_le = models.DateTimeField(
+        "Application activée le",
+        null=True,
+        blank=True,
+        help_text="Téléphone relié : les demandes extérieures reviennent au patient.",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -188,7 +213,8 @@ class AccessRequest(models.Model):
     """Demande d'accès dossier - consentement patient (sauf urgence)."""
 
     class Status(models.TextChoices):
-        PENDING = "pending", "En attente"
+        PENDING = "pending", "En attente validation patient"
+        PENDING_PRIOR = "pending_prior", "En attente validation médecin traitant"
         APPROVED = "approved", "Approuvé"
         DENIED = "denied", "Refusé"
         EXPIRED = "expired", "Expiré"
@@ -200,6 +226,10 @@ class AccessRequest(models.Model):
         SCAN = "scan", "Scan DotoCard"
         SEARCH = "search", "Recherche / ouverture"
         EMERGENCY = "emergency", "Mode urgence"
+
+    class Route(models.TextChoices):
+        PATIENT = "patient", "Patient"
+        HOPITAL_MERE = "hopital_mere", "Hôpital mère"
 
     patient = models.ForeignKey(
         Patient, on_delete=models.CASCADE, related_name="access_requests"
@@ -223,16 +253,55 @@ class AccessRequest(models.Model):
         blank=True,
         related_name="access_requests",
     )
+    # Médecin qui avait déjà un accès (co-validation lors d'un changement)
+    prior_medecin = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="access_requests_as_prior",
+    )
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True
     )
     mode = models.CharField(max_length=20, choices=Mode.choices, default=Mode.SCAN)
     reason = models.CharField(max_length=255, blank=True)
     scope = models.CharField(max_length=40, default="full")
+    # Qui doit accepter : le patient (app activée) ou l'hôpital mère.
+    route = models.CharField(
+        max_length=20, choices=Route.choices, default=Route.PATIENT, db_index=True
+    )
+    requested_duration_hours = models.PositiveIntegerField(
+        "Durée demandée (heures)", null=True, blank=True
+    )
+    # Hôpital qui devait statuer au moment de la demande (reste stable si l'hôpital mère change).
+    decision_structure = models.ForeignKey(
+        "accounts.StructureSante",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="access_requests_to_decide",
+    )
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="access_requests_decided",
+    )
+    direct_structure = models.BooleanField(
+        "Accès direct structure",
+        default=False,
+        help_text="Ouverture immédiate : professionnel de l'hôpital mère ou fenêtre de transfert.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     responded_at = models.DateTimeField(null=True, blank=True)
+    patient_approved_at = models.DateTimeField(null=True, blank=True)
+    prior_medecin_approved_at = models.DateTimeField(null=True, blank=True)
+    # None = accès durable (jusqu'à révocation patient)
     grant_expires_at = models.DateTimeField(null=True, blank=True)
+    last_accessed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]
@@ -246,32 +315,49 @@ class AccessRequest(models.Model):
 
     @property
     def is_pending(self) -> bool:
-        return self.status == self.Status.PENDING and timezone.now() < self.expires_at
+        return (
+            self.status in (self.Status.PENDING, self.Status.PENDING_PRIOR)
+            and timezone.now() < self.expires_at
+        )
 
     @property
     def has_active_grant(self) -> bool:
+        from patients.access import grant_deadline_passed
+
         if self.status == self.Status.EMERGENCY_BYPASS:
-            if self.grant_expires_at and timezone.now() > self.grant_expires_at:
-                return False
-            return True
+            return not grant_deadline_passed(self)
         if self.status != self.Status.APPROVED:
             return False
-        if self.grant_expires_at and timezone.now() > self.grant_expires_at:
+        # Accès durable : pas d'échéance (révocation uniquement). Une durée posée ferme l'accès.
+        return not grant_deadline_passed(self)
+
+    def is_access_stale(self) -> bool:
+        """True si la dernière ouverture est trop ancienne → PIN pro + notif patient."""
+        from django.conf import settings as dj_settings
+
+        minutes = int(getattr(dj_settings, "ACCESS_STALE_MINUTES", 12 * 60))
+        if not self.last_accessed_at:
             return False
-        return True
+        return timezone.now() > self.last_accessed_at + timedelta(minutes=minutes)
 
 
 def default_request_expiry():
-    minutes = getattr(settings, "ACCESS_REQUEST_TTL_MINUTES", 2)
+    minutes = getattr(settings, "ACCESS_REQUEST_TTL_MINUTES", 10)
+    return timezone.now() + timedelta(minutes=minutes)
+
+
+def default_prior_expiry():
+    """Délai de confirmation de l'ancien médecin, après l'accord du patient."""
+    minutes = getattr(settings, "ACCESS_PRIOR_TTL_MINUTES", 24 * 60)
     return timezone.now() + timedelta(minutes=minutes)
 
 
 def default_grant_expiry(emergency: bool = False):
+    """Urgence : TTL court. Accès normal : durable (None) jusqu'à révocation."""
     if emergency:
         minutes = getattr(settings, "ACCESS_EMERGENCY_GRANT_TTL_MINUTES", 30)
-    else:
-        minutes = getattr(settings, "ACCESS_GRANT_TTL_MINUTES", 60)
-    return timezone.now() + timedelta(minutes=minutes)
+        return timezone.now() + timedelta(minutes=minutes)
+    return None
 
 
 class Appointment(models.Model):
@@ -389,3 +475,79 @@ class AccessBlock(models.Model):
             else (self.blocked_structure.nom if self.blocked_structure else "?")
         )
         return f"Block {self.patient.full_name} → {target}"
+
+
+class HopitalMereTransfer(models.Model):
+    """Changement d'hôpital mère : accord des deux structures, puis confirmation."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "En attente de l'autre hôpital"
+        EN_COURS = "en_cours", "Transfert en cours (les deux ont accès)"
+        CONFIRME = "confirme", "Confirmé"
+        REFUSE = "refuse", "Refusé"
+        ANNULE = "annule", "Annulé"
+
+    patient = models.ForeignKey(
+        Patient, on_delete=models.CASCADE, related_name="transferts_hopital_mere"
+    )
+    from_structure = models.ForeignKey(
+        "accounts.StructureSante",
+        on_delete=models.PROTECT,
+        related_name="transferts_sortants",
+    )
+    to_structure = models.ForeignKey(
+        "accounts.StructureSante",
+        on_delete=models.PROTECT,
+        related_name="transferts_entrants",
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transferts_hopital_demandes",
+    )
+    duration_hours = models.PositiveIntegerField(
+        help_text="Après confirmation, l'ancien hôpital garde l'accès déjà ouvert pendant cette durée.",
+    )
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+    from_approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transferts_approuves_source",
+    )
+    from_approved_at = models.DateTimeField(null=True, blank=True)
+    to_approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transferts_approuves_destination",
+    )
+    to_approved_at = models.DateTimeField(null=True, blank=True)
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transferts_confirmes",
+    )
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    legacy_access_until = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Transfert d'hôpital mère"
+        verbose_name_plural = "Transferts d'hôpital mère"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["patient", "status"]),
+        ]
+
+    def __str__(self):
+        return f"Transfert#{self.pk} {self.status} patient={self.patient_id}"

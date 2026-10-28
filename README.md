@@ -51,14 +51,15 @@ Liste complète affichée par `seeddata` / `seed_demo`.
 
 | Rôle | Identifiants |
 |------|--------------|
-| Admin | `admin` / `AdminDoto2026!` |
-| Médecins | `medecin`, `medecin2`, `medecin3` / `Medecin123!` |
-| Infirmiers | `infirmier`, `infirmier2`, `infirmier3` / `Infirmier123!` |
-| Pharmaciens | `pharmacien`, `pharmacien2` / `Pharma123!` |
-| Laborantins | `laborantin`, `laborantin2` / `Labo123!` |
-| Ambulanciers | `ambulancier`, `ambulancier2`, `ambulancier3` / `Ambulancier123!` |
-| Réceptionnistes | `reception`, `reception2` / `Reception123!` |
-| Patients (DotoPlus) | `+229 97 45 12 88` (+ 3 autres) / `demo123` - NPI pour Hub/ANIP, PIN optionnel `1234` |
+| Admin | `admin` / `mdp123` |
+| Médecins | `medecin`, `medecin2`, `medecin3` / `mdp123` |
+| Infirmiers | `infirmier`, `infirmier2`, `infirmier3` / `mdp123` |
+| Pharmaciens | `pharmacien`, `pharmacien2` / `mdp123` |
+| Laborantins | `laborantin`, `laborantin2` / `mdp123` |
+| Ambulanciers | `ambulancier`, `ambulancier2`, `ambulancier3` / `mdp123` |
+| Réceptionnistes | `reception`, `reception2` / `mdp123` |
+| Patients (DotoPlus) | `+229 97 45 12 88` (+ 3 autres) / OTP `00000` - NPI pour Hub/ANIP, PIN `1234` |
+| PIN session pro | `1234` |
 
 Matrice d'accès : voir `core/permissions.py` et le README racine.
 

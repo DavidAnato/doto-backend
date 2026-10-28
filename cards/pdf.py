@@ -5,24 +5,40 @@ import io
 from pathlib import Path
 
 import qrcode
-from reportlab.lib.colors import HexColor, white
+from reportlab.lib.colors import Color, HexColor, white
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
 from accounts.phone import display_phone
 
+# Bandeau de page (hors carte) - inchangé.
 NAVY = HexColor("#1E3755")
-TEAL = HexColor("#3E8295")
 MUTED = HexColor("#6B7280")
-BORDER = HexColor("#E5E7EB")
 TEXT = HexColor("#1F2937")
-EMERGENCY_BG = HexColor("#FCE8E8")
-EMERGENCY = HexColor("#8B1E1E")  # contraste renforcé vs rouge clair
-INSURANCE_BG = HexColor("#E8F5EE")
 INSURANCE = HexColor("#0F5C45")
-SOFT_PLUS = HexColor("#EEF1F4")
+
+# Carte patient, alignée sur la maquette.
+CARD_NAVY = HexColor("#003462")
+CARD_TEAL = HexColor("#3d8ba8")
+CARD_RED = HexColor("#c01818")
+CARD_ORANGE = HexColor("#d03a00")
+CARD_BORDER = HexColor("#1f3a6e")
+CARD_LABEL = HexColor("#8b95a1")
+FRONT_BG = HexColor("#e3e3e9")
+BACK_BG = HexColor("#f7f7f7")
+BAND_BG = HexColor("#f6d4d0")
+INS_BG = HexColor("#fde6dc")
+PHOTO_BG = HexColor("#e7e9ee")
+PHOTO_BORDER = HexColor("#c5cad3")
+
+# Ratio 1,6 (960×600).
+CARD_W = 160 * mm
+CARD_H = 100 * mm
+BANNER_H = 28 * mm
+CARD_RADIUS = CARD_W * (45 / 960)
 
 
 def _logo_path() -> Path | None:
@@ -37,6 +53,11 @@ def _logo_path() -> Path | None:
     return None
 
 
+def _arms_path() -> Path | None:
+    p = Path(__file__).resolve().parents[2] / "dotoplus" / "assets" / "armoiries-benin.png"
+    return p if p.is_file() else None
+
+
 def _fmt_date(d) -> str:
     if not d:
         return "-"
@@ -49,264 +70,517 @@ def _fmt_date(d) -> str:
 def _allergies_label(patient) -> str:
     dossier = getattr(patient, "dossier", None)
     allergies = getattr(dossier, "allergies", None) or []
-    if isinstance(allergies, list) and allergies:
-        return ", ".join(str(a) for a in allergies if a) or "Non identifié"
-    return "Non identifié"
+    if isinstance(allergies, list):
+        items = [" ".join(str(a).split()) for a in allergies if str(a or "").strip()]
+        if items:
+            return ", ".join(items)
+    return "-"
 
 
-def _taux_pills(assurance) -> list[str]:
-    garanties = getattr(assurance, "garanties", None) or []
-    if not garanties:
-        return ["Consult. -", "Soins. -", "Pharma. -"]
-    labels = []
-    for g in garanties[:3]:
-        if not isinstance(g, dict):
-            continue
-        cat = str(g.get("categorie") or "Garantie")
-        short = cat.split()[0][:8] + "."
-        taux = g.get("taux", "-")
-        labels.append(f"{short} {taux}%")
-    while len(labels) < 3:
-        labels.append("-")
-    return labels[:3]
+def _format_npi(raw) -> str:
+    value = " ".join(str(raw or "").split())
+    if not value:
+        return "-"
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if len(digits) == 10:
+        return f"{digits[0:3]}-{digits[3:6]}-{digits[6:9]}-{digits[9]}"
+    return value
 
 
-def _draw_rounded(c: canvas.Canvas, x, y, w, h, r, fill=None, stroke=None):
+def _or_dash(value) -> str:
+    text = " ".join(str(value or "").split())
+    return text or "-"
+
+
+def _draw_rounded(c: canvas.Canvas, x, y, w, h, r, fill=None, stroke=None, stroke_width=0.8):
     c.saveState()
     if fill is not None:
         c.setFillColor(fill)
     if stroke is not None:
         c.setStrokeColor(stroke)
+        c.setLineWidth(stroke_width)
     c.roundRect(x, y, w, h, r, fill=1 if fill is not None else 0, stroke=1 if stroke is not None else 0)
     c.restoreState()
 
 
-def _draw_card_front(c: canvas.Canvas, card, x, y, w, h, qr_reader):
-    patient = card.patient
-    # Corps blanc
-    _draw_rounded(c, x, y, w, h, 3 * mm, fill=white, stroke=BORDER)
-
-    # En-tête navy
-    header_h = 9 * mm
-    c.setFillColor(NAVY)
-    c.rect(x, y + h - header_h, w, header_h, fill=1, stroke=0)
-    c.setFillColor(white)
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(x + 3 * mm, y + h - 5.8 * mm, "Carte d'accès santé")
-    c.setFont("Helvetica", 7)
-    c.drawRightString(x + w - 3 * mm, y + h - 5.8 * mm, "République du Bénin")
-
-    # Bande urgence (bas) - contraste texte renforcé
-    foot_h = 12 * mm
-    c.setFillColor(EMERGENCY_BG)
-    c.rect(x, y, w, foot_h, fill=1, stroke=0)
-    c.setStrokeColor(HexColor("#F0C4C4"))
-    c.line(x, y + foot_h, x + w, y + foot_h)
-
-    blood = getattr(patient, "groupe_sanguin", "") or "-"
-    allergies = _allergies_label(patient)
-    urg = display_phone(getattr(patient, "tel_urgence", "") or "")
-
-    col_w = w / 3
-    c.setFillColor(EMERGENCY)
-    c.setFont("Helvetica", 5.5)
-    c.drawString(x + 2.5 * mm, y + foot_h - 3.2 * mm, "Groupe sanguin")
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(x + 2.5 * mm, y + foot_h - 7.5 * mm, blood[:8])
-
-    c.setFont("Helvetica", 5.5)
-    c.drawString(x + col_w + 1 * mm, y + foot_h - 3.2 * mm, "Allergies connues")
-    c.setFont("Helvetica-Bold", 6.5)
-    # Wrap allergies
-    allerg_y = y + foot_h - 6.5 * mm
-    for i, chunk in enumerate(_wrap(allergies, 22)[:2]):
-        c.drawString(x + col_w + 1 * mm, allerg_y - i * 2.8 * mm, chunk)
-
-    c.setFont("Helvetica", 5.5)
-    c.drawString(x + 2 * col_w + 1 * mm, y + foot_h - 3.2 * mm, "Numéro en cas d'urgence")
-    c.setFont("Helvetica-Bold", 7)
-    c.drawString(x + 2 * col_w + 1 * mm, y + foot_h - 7.5 * mm, urg)
-
-    # Corps identité
-    body_top = y + h - header_h - 2 * mm
-    body_bottom = y + foot_h + 2 * mm
-
-    # Marque + n° carte
-    c.setFillColor(TEAL)
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(x + 3 * mm, body_top - 4 * mm, "DotoCard")
-    c.setFillColor(MUTED)
-    c.setFont("Helvetica", 6.5)
-    c.drawString(x + 3 * mm, body_top - 7.5 * mm, f"Carte N°: {card.id}")
-
-    # Photo
-    photo_size = 18 * mm
-    photo_x = x + 3 * mm
-    photo_y = body_bottom + 4 * mm
-    photo = getattr(patient, "photo", None)
-    c.setStrokeColor(BORDER)
-    c.setFillColor(SOFT_PLUS)
-    c.rect(photo_x, photo_y, photo_size, photo_size, fill=1, stroke=1)
-    if photo and getattr(photo, "path", None):
-        try:
-            p = Path(photo.path)
-            if p.is_file():
-                c.drawImage(
-                    str(p),
-                    photo_x,
-                    photo_y,
-                    width=photo_size,
-                    height=photo_size,
-                    preserveAspectRatio=True,
-                    mask="auto",
-                )
-        except Exception:
-            pass
-
-    # Champs identité
-    info_x = photo_x + photo_size + 3 * mm
-    fields = [
-        ("Nom", (patient.nom or "").upper()),
-        ("Prénoms", patient.prenom or "-"),
-        ("Date de naissance", _fmt_date(patient.date_naissance)),
-        ("Lieu de naissance", getattr(patient, "lieu_naissance", "") or "-"),
-    ]
-    fy = body_top - 12 * mm
-    for label, val in fields:
-        c.setFillColor(MUTED)
-        c.setFont("Helvetica", 5.5)
-        c.drawString(info_x, fy + 3.2 * mm, label)
-        c.setFillColor(TEXT)
-        c.setFont("Helvetica-Bold", 8)
-        c.drawString(info_x, fy, (val or "-")[:28])
-        fy -= 6.5 * mm
-
-    # NPI + QR + tél - QR agrandi
-    right_x = x + w - 32 * mm
-    c.setFillColor(MUTED)
-    c.setFont("Helvetica", 5.5)
-    c.drawString(right_x, body_top - 3 * mm, "NPI")
-    c.setFillColor(TEXT)
-    c.setFont("Helvetica-Bold", 7)
-    c.drawString(right_x, body_top - 6 * mm, (patient.npi or "-")[:18])
-
-    qr_size = 26 * mm
-    c.drawImage(qr_reader, right_x, body_top - 7 * mm - qr_size, width=qr_size, height=qr_size, mask="auto")
-
-    tel = display_phone(getattr(patient, "telephone", "") or "")
-    c.setFillColor(MUTED)
-    c.setFont("Helvetica", 5.5)
-    c.drawString(right_x, body_bottom + 6 * mm, "Num. tél")
-    c.setFillColor(TEXT)
-    c.setFont("Helvetica-Bold", 6.5)
-    c.drawString(right_x, body_bottom + 3 * mm, tel)
+def _clean(text) -> str:
+    return " ".join(str(text or "").split()) or "-"
 
 
-def _wrap(text: str, width: int) -> list[str]:
-    words = (text or "").split()
-    if not words:
-        return ["-"]
-    lines, cur = [], ""
-    for w in words:
-        trial = f"{cur} {w}".strip()
-        if len(trial) <= width:
+def _lines_for(text: str, font: str, size: float, max_w: float) -> list[str]:
+    """Découpe sur les espaces. Ne coupe jamais un mot."""
+    words = _clean(text).split()
+    lines: list[str] = []
+    cur = ""
+    for word in words:
+        trial = word if not cur else f"{cur} {word}"
+        if stringWidth(trial, font, size) <= max_w:
             cur = trial
         else:
             if cur:
                 lines.append(cur)
-            cur = w
+            cur = word
     if cur:
         lines.append(cur)
     return lines or ["-"]
 
 
+def _fit_lines(text, font, max_size, min_size, max_w, max_lines) -> tuple[list[str], float]:
+    size = float(max_size)
+    floor = float(min_size)
+    while True:
+        lines = _lines_for(text, font, size, max_w)
+        fits = len(lines) <= max_lines and all(stringWidth(ln, font, size) <= max_w + 0.6 for ln in lines)
+        if fits or size <= floor + 0.01:
+            if not fits:
+                lines = lines[:max_lines] or ["-"]
+            return lines, size
+        size = max(floor, round(size - 0.25, 2))
+
+
+def _draw_fitted(
+    c: canvas.Canvas,
+    text,
+    x,
+    baseline,
+    max_w,
+    font,
+    max_size,
+    color,
+    max_lines=1,
+    min_size=6,
+    align="left",
+) -> float:
+    """Dessine le texte dans max_w. Retourne l'ordonnée sous la dernière ligne."""
+    lines, size = _fit_lines(text, font, max_size, min_size, max_w, max_lines)
+    lead = size * 1.28
+    c.setFillColor(color)
+    c.setFont(font, size)
+    y = baseline
+    for ln in lines:
+        if align == "center":
+            c.drawCentredString(x, y, ln)
+        elif align == "right":
+            c.drawRightString(x, y, ln)
+        else:
+            c.drawString(x, y, ln)
+        y -= lead
+    return y
+
+
+def _open_card(c: canvas.Canvas, x, y, w, h, fill):
+    _draw_rounded(c, x, y, w, h, CARD_RADIUS, fill=fill, stroke=None)
+    c.saveState()
+    path = c.beginPath()
+    path.roundRect(x, y, w, h, CARD_RADIUS)
+    c.clipPath(path, stroke=0, fill=0)
+
+
+def _close_card(c: canvas.Canvas, x, y, w, h):
+    c.restoreState()
+    c.saveState()
+    c.setStrokeColor(CARD_BORDER)
+    c.setLineWidth(0.7 * mm)
+    c.roundRect(x, y, w, h, CARD_RADIUS, fill=0, stroke=1)
+    c.restoreState()
+
+
+def _draw_watermark(c: canvas.Canvas, x, y, w, h):
+    c.saveState()
+    cx = x + w * 0.50
+    cy = y + h * 0.46
+    disc = w * 0.28
+    c.setStrokeColor(Color(0.66, 0.76, 0.84, alpha=0.45))
+    c.setLineWidth(max(2.2, w * 0.028))
+    c.circle(cx, cy, disc, stroke=1, fill=0)
+    arm = w * 0.05
+    length = w * 0.18
+    c.setFillColor(Color(0.69, 0.78, 0.86, alpha=0.42))
+    c.rect(cx - arm / 2, cy - length / 2, arm, length, fill=1, stroke=0)
+    c.rect(cx - length / 2, cy - arm / 2, length, arm, fill=1, stroke=0)
+    c.restoreState()
+
+
+def _draw_header_bar(c, x, y, w, h, title, right=None, with_arms=False):
+    header_h = h * 0.125
+    c.setFillColor(CARD_NAVY)
+    c.rect(x, y + h - header_h, w, header_h, fill=1, stroke=0)
+    title_size = 11
+    baseline = y + h - header_h + (header_h - title_size) * 0.38
+    right_limit = x + w - 3.2 * mm
+    if with_arms:
+        arms = _arms_path()
+        if arms:
+            try:
+                reader = ImageReader(str(arms))
+                iw, ih = reader.getSize()
+                ah = header_h * 0.82
+                aw = ah * (float(iw) / float(ih)) if ih else ah
+                ax = right_limit - aw
+                ay = y + h - header_h + (header_h - ah) / 2
+                c.drawImage(reader, ax, ay, width=aw, height=ah, mask="auto", preserveAspectRatio=True)
+                right_limit = ax - 1.6 * mm
+            except Exception:
+                pass
+    if right:
+        c.setFillColor(white)
+        c.setFont("Helvetica", 8)
+        c.drawRightString(right_limit, baseline, right)
+        right_limit -= stringWidth(right, "Helvetica", 8) + 2 * mm
+    title_w = max(20 * mm, right_limit - (x + 4 * mm))
+    _draw_fitted(
+        c,
+        title,
+        x + 4 * mm,
+        baseline,
+        title_w,
+        "Helvetica-Bold",
+        title_size,
+        white,
+        max_lines=1,
+        min_size=8,
+    )
+
+
+def _draw_image_cover(c: canvas.Canvas, path: Path, x, y, w, h):
+    reader = ImageReader(str(path))
+    iw, ih = reader.getSize()
+    if not iw or not ih:
+        return
+    scale = max(w / float(iw), h / float(ih))
+    dw, dh = iw * scale, ih * scale
+    dx = x - (dw - w) / 2
+    dy = y - (dh - h) / 2
+    c.saveState()
+    try:
+        clip = c.beginPath()
+        clip.rect(x, y, w, h)
+        c.clipPath(clip, stroke=0, fill=0)
+        c.drawImage(reader, dx, dy, width=dw, height=dh, mask="auto")
+    finally:
+        c.restoreState()
+
+
+def _draw_photo(c: canvas.Canvas, patient, x, y, side):
+    c.setFillColor(PHOTO_BG)
+    c.rect(x, y, side, side, fill=1, stroke=0)
+    photo = getattr(patient, "photo", None)
+    path = getattr(photo, "path", None) if photo else None
+    if path:
+        p = Path(path)
+        if p.is_file():
+            try:
+                _draw_image_cover(c, p, x, y, side, side)
+            except Exception:
+                pass
+    c.setStrokeColor(PHOTO_BORDER)
+    c.setLineWidth(0.6)
+    c.rect(x, y, side, side, fill=0, stroke=1)
+
+
+def _draw_card_front(c: canvas.Canvas, card, x, y, w, h, qr_reader):
+    patient = card.patient
+    pad = 4.6 * mm
+    header_h = h * 0.125
+    footer_h = h * 0.195
+
+    _open_card(c, x, y, w, h, FRONT_BG)
+    _draw_watermark(c, x, y, w, h)
+    _draw_header_bar(c, x, y, w, h, "Carte d'accès santé", "République du Bénin", with_arms=True)
+
+    content_top = y + h - header_h
+    brand_base = content_top - 6.2 * mm
+    c.setFillColor(CARD_NAVY)
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(x + pad, brand_base, "Doto")
+    doto_w = stringWidth("Doto", "Helvetica-Bold", 16)
+    c.setFillColor(CARD_TEAL)
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(x + pad + doto_w, brand_base, "Card")
+
+    card_no = f"Carte N°: {card.id}"
+    _draw_fitted(
+        c,
+        card_no,
+        x + pad,
+        brand_base - 4.6 * mm,
+        w * 0.48,
+        "Helvetica-Bold",
+        8.5,
+        CARD_NAVY,
+        max_lines=1,
+        min_size=6.5,
+    )
+
+    npi = f"NPI: {_format_npi(getattr(patient, 'npi', ''))}"
+    npi_size = 9
+    npi_max = w * 0.46
+    while npi_size > 6.5 and stringWidth(npi, "Helvetica-Bold", npi_size) > npi_max:
+        npi_size -= 0.25
+    npi_w = stringWidth(npi, "Helvetica-Bold", npi_size)
+    npi_x = x + w - pad - npi_w
+    c.setFillColor(CARD_NAVY)
+    c.setFont("Helvetica-Bold", npi_size)
+    c.drawString(npi_x, brand_base, npi)
+    c.setStrokeColor(CARD_NAVY)
+    c.setLineWidth(0.5)
+    c.line(npi_x, brand_base - 0.7, npi_x + npi_w, brand_base - 0.7)
+
+    mid_top = brand_base - 7.2 * mm
+    mid_bottom = y + footer_h + 1.4 * mm
+    mid_h = max(18 * mm, mid_top - mid_bottom)
+    photo_side = min(42 * mm, mid_h)
+    photo_x = x + pad
+    photo_y = mid_top - photo_side
+    _draw_photo(c, patient, photo_x, photo_y, photo_side)
+
+    qr_col = 36 * mm
+    qr_left = x + w - pad - qr_col
+    id_x = photo_x + photo_side + 3.2 * mm
+    id_w = qr_left - 3 * mm - id_x
+    fields = [
+        ("Nom", (getattr(patient, "nom", "") or "").strip().upper() or "-"),
+        ("Prénoms", _or_dash(getattr(patient, "prenom", ""))),
+        ("Date de naissance", _fmt_date(getattr(patient, "date_naissance", None))),
+        ("Lieu de naissance", _or_dash(getattr(patient, "lieu_naissance", ""))),
+    ]
+    slot = photo_side / len(fields)
+    for index, (label, value) in enumerate(fields):
+        top = mid_top - index * slot
+        c.setFillColor(CARD_LABEL)
+        c.setFont("Helvetica", 6.5)
+        c.drawString(id_x, top - 2.5 * mm, label)
+        _draw_fitted(
+            c,
+            value,
+            id_x,
+            top - 6.2 * mm,
+            id_w,
+            "Helvetica-Bold",
+            9,
+            CARD_NAVY,
+            max_lines=1,
+            min_size=6.5,
+        )
+
+    phone = display_phone(getattr(patient, "telephone", "") or "")
+    qr_size = min(30 * mm, qr_col - 1 * mm, max(18 * mm, photo_side - 8 * mm))
+    qr_x = qr_left + qr_col - qr_size
+    qr_y = mid_top - qr_size
+    if qr_y - 6 * mm < mid_bottom:
+        qr_y = mid_bottom + 6 * mm
+        qr_size = min(qr_size, mid_top - qr_y)
+    c.setFillColor(white)
+    c.rect(qr_x, qr_y, qr_size, qr_size, fill=1, stroke=0)
+    c.drawImage(qr_reader, qr_x, qr_y, width=qr_size, height=qr_size, mask="auto")
+    _draw_fitted(
+        c,
+        f"Num. tél: {phone}",
+        x + w - pad,
+        qr_y - 4.2 * mm,
+        qr_col + 6 * mm,
+        "Helvetica-Bold",
+        7.4,
+        CARD_NAVY,
+        max_lines=2,
+        min_size=5.8,
+        align="right",
+    )
+
+    c.setFillColor(BAND_BG)
+    c.rect(x, y, w, footer_h, fill=1, stroke=0)
+    blood = _or_dash(getattr(patient, "groupe_sanguin", ""))
+    allergies = _allergies_label(patient)
+    urg = display_phone(getattr(patient, "tel_urgence", "") or "")
+    col_w = (w - 2 * pad) / 3
+    items = (
+        ("Groupe sanguin:", blood, 1),
+        ("Allergies connues", allergies, 2),
+        ("Numéro en cas d'urgence", urg, 2),
+    )
+    label_y = y + footer_h - 5.2 * mm
+    for index, (label, value, lines) in enumerate(items):
+        cx = x + pad + index * col_w
+        _draw_fitted(c, label, cx, label_y, col_w - 1.5 * mm, "Helvetica-Bold", 6.6, CARD_RED, max_lines=2, min_size=5.4)
+        _draw_fitted(
+            c,
+            value,
+            cx,
+            label_y - 4.6 * mm,
+            col_w - 1.5 * mm,
+            "Helvetica-Bold",
+            8.5,
+            CARD_RED,
+            max_lines=lines,
+            min_size=6,
+        )
+
+    _close_card(c, x, y, w, h)
+
+
+def _insured(patient) -> bool:
+    assurance = getattr(patient, "assurance", None)
+    return bool(
+        assurance and getattr(assurance, "assureur", None) and getattr(assurance, "droits_valides", True)
+    )
+
+
+def _draw_coverage(c, patient, x, y, w, h):
+    assurance = getattr(patient, "assurance", None)
+    insured = _insured(patient)
+    radius = min(4.2 * mm, h * 0.18)
+    c.setFillColor(INS_BG)
+    c.roundRect(x, y, w, h, radius, fill=1, stroke=0)
+    pad = 4 * mm
+    inner_w = w - 2 * pad
+    _draw_fitted(
+        c,
+        "COUVERTURE ASSURANTIELLE",
+        x + pad,
+        y + h - 5.4 * mm,
+        inner_w,
+        "Helvetica-Bold",
+        8,
+        CARD_ORANGE,
+        max_lines=1,
+        min_size=6.5,
+    )
+
+    if insured:
+        badge = _clean(getattr(assurance, "assureur", "") or "") or "Assuré"
+        lines = [f"Police: {_or_dash(getattr(assurance, 'num_police', ''))}"]
+        coverage = " ".join(str(getattr(assurance, "type_couverture", "") or "").split())
+        if coverage:
+            lines.append(coverage)
+    else:
+        badge = "Non Assuré"
+        lines = [
+            "Soins à paiement direct auprès des structures partenaires",
+            "Urgence vitale : dispositif national de paiement différé",
+        ]
+
+    badge_size = 9
+    while badge_size > 6.5 and stringWidth(badge, "Helvetica-Bold", badge_size) > inner_w - 8 * mm:
+        badge_size -= 0.25
+    badge_w = min(inner_w, stringWidth(badge, "Helvetica-Bold", badge_size) + 7 * mm)
+    badge_h = 6.4 * mm
+    badge_y = y + h - 13.2 * mm
+    c.setFillColor(white)
+    c.setStrokeColor(HexColor("#f0c2b0"))
+    c.setLineWidth(0.6)
+    c.roundRect(x + pad, badge_y, badge_w, badge_h, badge_h / 2, fill=1, stroke=1)
+    c.setFillColor(CARD_ORANGE)
+    c.setFont("Helvetica-Bold", badge_size)
+    c.drawString(x + pad + 3.2 * mm, badge_y + 2.05 * mm, badge)
+
+    cursor = badge_y - 4.4 * mm
+    for line in lines:
+        cursor = _draw_fitted(
+            c,
+            line,
+            x + pad,
+            cursor,
+            inner_w,
+            "Helvetica",
+            8,
+            CARD_ORANGE,
+            max_lines=2,
+            min_size=6.2,
+        )
+        cursor -= 0.8 * mm
+
+
+def _pair(c, label, value, x, baseline, max_w):
+    c.setFillColor(CARD_NAVY)
+    c.setFont("Helvetica", 8)
+    c.drawString(x, baseline, label)
+    label_w = stringWidth(label + " ", "Helvetica", 8)
+    _draw_fitted(
+        c,
+        value,
+        x + label_w,
+        baseline,
+        max(12 * mm, max_w - label_w),
+        "Helvetica-Bold",
+        8.5,
+        CARD_NAVY,
+        max_lines=1,
+        min_size=6.5,
+    )
+
+
 def _draw_card_back(c: canvas.Canvas, card, x, y, w, h):
     patient = card.patient
-    assurance = getattr(patient, "assurance", None)
-    is_insured = bool(assurance and getattr(assurance, "assureur", None) and getattr(assurance, "droits_valides", True))
+    pad = 5 * mm
+    header_h = h * 0.125
+    legal_h = 16 * mm
 
-    _draw_rounded(c, x, y, w, h, 3 * mm, fill=white, stroke=BORDER)
+    _open_card(c, x, y, w, h, BACK_BG)
+    _draw_watermark(c, x, y, w, h)
+    _draw_header_bar(c, x, y, w, h, "Informations complémentaires")
 
-    header_h = 9 * mm
-    c.setFillColor(NAVY)
-    c.rect(x, y + h - header_h, w, header_h, fill=1, stroke=0)
-    c.setFillColor(white)
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(x + 3 * mm, y + h - 5.8 * mm, "Informations complémentaires")
+    gutter = 6 * mm
+    col_w = (w - 2 * pad - gutter) / 2
+    left_x = x + pad
+    right_x = left_x + col_w + gutter
+    zone_top = y + h - header_h - 7 * mm
 
-    # Zone filiation / adresse
-    mid_y = y + h - header_h - 2 * mm
-    pere = getattr(patient, "nom_pere", "") or "-"
-    mere = getattr(patient, "nom_mere", "") or "-"
-    commune = getattr(patient, "adresse_commune", "") or "-"
-    quartier = getattr(patient, "adresse_quartier", "") or "-"
-    c.setFillColor(MUTED)
-    c.setFont("Helvetica-Bold", 6)
-    c.drawString(x + 3 * mm, mid_y - 4 * mm, "Filiation")
-    c.drawString(x + w / 2, mid_y - 4 * mm, "Adresse de résidence")
-    c.setFillColor(TEXT)
-    c.setFont("Helvetica", 7)
-    c.drawString(x + 3 * mm, mid_y - 8 * mm, f"Père: {pere}"[:42])
-    c.drawString(x + 3 * mm, mid_y - 12 * mm, f"Mère: {mere}"[:42])
-    c.drawString(x + w / 2, mid_y - 8 * mm, f"Com. {commune}"[:36])
-    c.drawString(x + w / 2, mid_y - 12 * mm, f"Qtr: {quartier}"[:36])
-
-    # Bloc couverture
-    block_h = 22 * mm
-    block_y = y + 10 * mm
-    if is_insured:
-        c.setFillColor(INSURANCE_BG)
-        c.rect(x, block_y, w, block_h, fill=1, stroke=0)
-        c.setFillColor(INSURANCE)
-        c.setFont("Helvetica-Bold", 7)
-        c.drawString(x + 3 * mm, block_y + block_h - 4.5 * mm, "COUVERTURE ASSURANTIELLE")
-        c.setFont("Helvetica", 6)
-        c.drawRightString(x + w - 3 * mm, block_y + block_h - 4.5 * mm, "Tél: +229 21 30 31 30")
-
-        c.setFont("Helvetica-Bold", 8)
-        c.drawString(x + 3 * mm, block_y + block_h - 9 * mm, (assurance.assureur or "")[:36])
-        c.setFont("Helvetica", 6)
-        c.setFillColor(TEXT)
-        line = f"Police: {assurance.num_police or '-'}  ·  {assurance.type_couverture or '-'}"
-        c.drawString(x + 3 * mm, block_y + block_h - 13 * mm, line[:55])
-
-        # Pills taux (info, pas boutons)
-        pills = _taux_pills(assurance)
-        px = x + 3 * mm
-        for label in pills:
-            pw = 24 * mm
-            c.setFillColor(white)
-            c.roundRect(px, block_y + 2.5 * mm, pw, 5.5 * mm, 2 * mm, fill=1, stroke=0)
-            c.setFillColor(INSURANCE)
-            c.setFont("Helvetica-Bold", 6)
-            c.drawCentredString(px + pw / 2, block_y + 4.2 * mm, label)
-            px += pw + 2 * mm
-    else:
-        c.setFillColor(HexColor("#F3F4F6"))
-        c.rect(x, block_y, w, block_h, fill=1, stroke=0)
-        c.setFillColor(NAVY)
-        c.setFont("Helvetica-Bold", 7)
-        c.drawString(x + 3 * mm, block_y + block_h - 5 * mm, "COUVERTURE ASSURANTIELLE")
-        c.setFillColor(TEXT)
+    def _title(text, cx, underline):
+        c.setFillColor(CARD_NAVY)
         c.setFont("Helvetica-Bold", 9)
-        c.drawString(x + 3 * mm, block_y + block_h - 11 * mm, "Non Assuré")
-        c.setFont("Helvetica", 6.5)
-        c.setFillColor(MUTED)
-        c.drawString(x + 3 * mm, block_y + block_h - 15.5 * mm, "Soins à paiement direct auprès des structures partenaires")
-        c.drawString(x + 3 * mm, block_y + block_h - 19 * mm, "Urgence vitale : dispositif national de paiement différé")
+        c.drawString(cx, zone_top, text)
+        c.setStrokeColor(CARD_NAVY)
+        c.setLineWidth(0.6)
+        c.line(cx, zone_top - 1.15 * mm, cx + underline, zone_top - 1.15 * mm)
 
-    # Mentions
-    c.setFillColor(EMERGENCY)
-    c.setFont("Helvetica", 5)
-    c.drawCentredString(
+    _title("Filiation", left_x, min(col_w, stringWidth("Filiation", "Helvetica-Bold", 9) + 6 * mm))
+    _title("Adresse de résidence", right_x, col_w)
+
+    pere = _or_dash(getattr(patient, "nom_pere", ""))
+    mere = _or_dash(getattr(patient, "nom_mere", ""))
+    commune = _or_dash(getattr(patient, "adresse_commune", ""))
+    quartier = _or_dash(getattr(patient, "adresse_quartier", ""))
+    _pair(c, "Père:", pere, left_x, zone_top - 7 * mm, col_w)
+    _pair(c, "Mère:", mere, left_x, zone_top - 12.2 * mm, col_w)
+    _pair(c, "Com.", commune, right_x, zone_top - 7 * mm, col_w)
+    _pair(c, "Qtr:", quartier, right_x, zone_top - 12.2 * mm, col_w)
+
+    box_h = 34 * mm
+    box_top = zone_top - 16.5 * mm
+    box_y = box_top - box_h
+    min_y = y + legal_h + 1.6 * mm
+    if box_y < min_y:
+        box_y = min_y
+        box_h = max(24 * mm, box_top - box_y)
+    _draw_coverage(c, patient, x + pad, box_y, w - 2 * pad, box_h)
+
+    disc = "Cette carte est strictement personnelle, non-transférable et demeure la propriété de l'émetteur.*"
+    _draw_fitted(
+        c,
+        disc,
         x + w / 2,
-        y + 6.5 * mm,
-        "Cette carte est strictement personnelle, non-transférable et demeure la propriété de l'émetteur.*",
+        y + legal_h - 5.2 * mm,
+        w - 2 * pad,
+        "Helvetica",
+        6.6,
+        CARD_RED,
+        max_lines=2,
+        min_size=5.4,
+        align="center",
     )
-    c.setFillColor(TEXT)
-    c.setFont("Helvetica-Bold", 6.5)
     exp = _fmt_date(card.date_expiration)
-    c.drawCentredString(x + w / 2, y + 2.8 * mm, f"Valable jusqu'au : {exp}")
+    c.setFillColor(CARD_NAVY)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawCentredString(x + w / 2, y + 3.6 * mm, f"Valable jusqu'au : {exp}")
+
+    _close_card(c, x, y, w, h)
+
+
+def _card_slots(page_w, page_h):
+    card_x = (page_w - CARD_W) / 2
+    front_y = page_h - BANNER_H - 10 * mm - CARD_H
+    back_y = front_y - 12 * mm - CARD_H
+    return card_x, front_y, back_y, CARD_W, CARD_H
 
 
 def build_dodocard_pdf(card) -> bytes:
@@ -322,7 +596,7 @@ def build_dodocard_pdf(card) -> bytes:
 
     # En-tête page
     c.setFillColor(NAVY)
-    c.rect(0, height - 28 * mm, width, 28 * mm, fill=1, stroke=0)
+    c.rect(0, height - BANNER_H, width, BANNER_H, fill=1, stroke=0)
     c.setFillColor(white)
     c.setFont("Helvetica-Bold", 18)
     c.drawString(18 * mm, height - 14 * mm, "DOTO+")
@@ -344,55 +618,48 @@ def build_dodocard_pdf(card) -> bytes:
         except Exception:
             pass
 
-    # QR haute rés
+    # QR haute rés — même token opaque, correction M.
     qr_img = qrcode.make(card.token_chiffre, error_correction=qrcode.constants.ERROR_CORRECT_M)
     qr_buf = io.BytesIO()
     qr_img.save(qr_buf, format="PNG")
     qr_buf.seek(0)
     qr_reader = ImageReader(qr_buf)
 
-    card_w, card_h = 86 * mm, 54 * mm
-    card_x = (width - card_w) / 2
+    card_x, front_y, back_y, card_w, card_h = _card_slots(width, height)
 
-    # Face avant
-    front_y = height - 95 * mm
     c.setFillColor(MUTED)
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(card_x, front_y + card_h + 3 * mm, "Recto")
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(card_x, front_y + card_h + 3.2 * mm, "Recto")
     _draw_card_front(c, card, card_x, front_y, card_w, card_h, qr_reader)
 
-    # Face arrière
-    back_y = front_y - card_h - 14 * mm
     c.setFillColor(MUTED)
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(card_x, back_y + card_h + 3 * mm, "Verso")
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(card_x, back_y + card_h + 3.2 * mm, "Verso")
     _draw_card_back(c, card, card_x, back_y, card_w, card_h)
 
-    # Rappel scan
     c.setFillColor(TEXT)
     c.setFont("Helvetica-Bold", 10)
-    c.drawCentredString(width / 2, back_y - 10 * mm, "Présentez le QR au professionnel de santé")
+    c.drawCentredString(width / 2, back_y - 8 * mm, "Présentez le QR au professionnel de santé")
     c.setFillColor(MUTED)
     c.setFont("Helvetica", 8)
     c.drawCentredString(
         width / 2,
-        back_y - 15 * mm,
+        back_y - 13 * mm,
         "Aucune donnée médicale dans le QR - token d'accès opaque uniquement.",
     )
 
-    # Badge statut
     assurance = getattr(patient, "assurance", None)
     insured = bool(assurance and getattr(assurance, "assureur", None))
     badge = "Assuré" if insured else "Non assuré"
     c.setFillColor(INSURANCE if insured else MUTED)
     c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(width / 2, 16 * mm, f"Statut couverture : {badge}")
+    c.drawCentredString(width / 2, 15 * mm, f"Statut couverture : {badge}")
 
     c.setFillColor(MUTED)
     c.setFont("Helvetica", 7)
     c.drawCentredString(
         width / 2,
-        10 * mm,
+        9 * mm,
         "DOTO+ · Document généré automatiquement - ne pas plastifier le QR trop près des bords.",
     )
     c.showPage()

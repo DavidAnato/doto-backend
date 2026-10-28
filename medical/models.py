@@ -41,6 +41,15 @@ class Consultation(models.Model):
     notes = models.TextField(blank=True)
     extra = models.JSONField(default=dict, blank=True)
     annule = models.BooleanField(default=False)
+    # Partage patient : seule la synthèse est visible côté DotoPlus
+    shared_with_patient = models.BooleanField(
+        default=False,
+        help_text="Si vrai, le patient voit la synthèse (pas le dossier complet).",
+    )
+    synthese_patient = models.TextField(
+        blank=True,
+        help_text="Résumé que le médecin partage explicitement avec le patient.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

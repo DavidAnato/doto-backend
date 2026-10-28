@@ -15,8 +15,7 @@ import os
 import re
 import shutil
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeout
+import time
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -262,11 +261,11 @@ def _prepare_ocr_image(image_bytes: bytes) -> Image.Image:
     w, h = img.size
     longest = max(w, h)
     # Trop petit → upscale ; trop grand → downscale léger (garde + détail pour flou)
-    if longest < 1400:
-        scale = 1400 / longest
+    if longest < 1100:
+        scale = 1100 / longest
         img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
-    elif longest > 2000:
-        scale = 2000 / longest
+    elif longest > 1280:
+        scale = 1280 / longest
         img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
     return img
 
@@ -320,21 +319,12 @@ def _configure_tesseract() -> str:
     return cmd
 
 
-def _tesseract_langs() -> list[str]:
-    preferred = (os.environ.get("DOTO_OCR_LANG") or "fra+eng").strip() or "fra+eng"
-    # fra manquant → eng seul, plutôt qu'un crash « Error opening data file »
-    ordered = [preferred, "fra+eng", "eng+fra", "fra", "eng"]
-    out: list[str] = []
-    for lang in ordered:
-        if lang not in out:
-            out.append(lang)
-    return out
-
-
 def _items_from_tesseract(image_bytes: bytes) -> list[dict[str, Any]]:
     import pytesseract
     from pytesseract import Output
 
+    # Un seul cœur : le VPS est partagé, plusieurs passes LSTM le saturent.
+    os.environ["OMP_THREAD_LIMIT"] = "1"
     _configure_tesseract()
     img = _prepare_ocr_image(image_bytes)
     gray = ImageOps.autocontrast(img.convert("L"), cutoff=1)
@@ -342,38 +332,41 @@ def _items_from_tesseract(image_bytes: bytes) -> list[dict[str, Any]]:
 
     last_err: Exception | None = None
     data = None
-    for lang in _tesseract_langs():
-        for psm in ("6", "4", "11"):
-            try:
-                candidate = pytesseract.image_to_data(
-                    gray,
-                    lang=lang,
-                    config=f"--psm {psm}",
-                    output_type=Output.DICT,
-                    timeout=20,
-                )
-                nonempty = sum(1 for t in (candidate.get("text") or []) if str(t).strip())
-                if nonempty >= 4:
-                    data = candidate
-                    logger.info("Tesseract ok lang=%s psm=%s blocs=%s", lang, psm, nonempty)
-                    break
-                last_err = RuntimeError(f"tesseract lang={lang} psm={psm}: peu de texte ({nonempty})")
-            except pytesseract.TesseractNotFoundError as e:
-                raise RuntimeError(
-                    "Tesseract introuvable (binaire). Vérifier aptPackages / TESSERACT_CMD."
-                ) from e
-            except pytesseract.TesseractError as e:
-                last_err = e
-                msg = str(e).lower()
-                if "failed loading language" in msg or "error opening data file" in msg:
-                    logger.warning("Tesseract langue indisponible (%s): %s", lang, e)
-                    break
-                continue
-            except Exception as e:  # noqa: BLE001
-                last_err = e
-                continue
-        if data:
+    started = time.monotonic()
+    # Une lecture LSTM, une seule secours. Pas de cascade de langues :
+    # elle dépassait le délai puis le résultat était jeté.
+    lang = (os.environ.get("DOTO_OCR_LANG") or "fra+eng").strip() or "fra+eng"
+    for psm in ("6", "4"):
+        if time.monotonic() - started > 14:
             break
+        try:
+            candidate = pytesseract.image_to_data(
+                gray,
+                lang=lang,
+                config=f"--psm {psm} --oem 1",
+                output_type=Output.DICT,
+                timeout=12,
+            )
+            nonempty = sum(1 for t in (candidate.get("text") or []) if str(t).strip())
+            if nonempty >= 4:
+                data = candidate
+                logger.info("Tesseract ok lang=%s psm=%s blocs=%s", lang, psm, nonempty)
+                break
+            last_err = RuntimeError(f"tesseract psm={psm}: peu de texte ({nonempty})")
+        except pytesseract.TesseractNotFoundError as e:
+            raise RuntimeError(
+                "Tesseract introuvable (binaire). Vérifier aptPackages / TESSERACT_CMD."
+            ) from e
+        except pytesseract.TesseractError as e:
+            last_err = e
+            msg = str(e).lower()
+            if "failed loading language" in msg or "error opening data file" in msg:
+                logger.warning("Tesseract langue indisponible (%s): %s", lang, e)
+                break
+            continue
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            continue
 
     if not data:
         raise RuntimeError(f"Tesseract n'a lu aucun texte ({last_err})")
@@ -647,19 +640,32 @@ def _line_tol(items: list[dict]) -> float:
     return max(14.0, min(med * 0.45, 28.0))
 
 
+def _label_hit(tc: str, kc: str) -> bool:
+    """« nom » ne doit pas attraper « prénom », ni « numéro »."""
+    if not kc or not tc:
+        return False
+    if kc in ("nom",):
+        return tc.startswith("nom") and not tc.startswith("prenom")
+    if kc in ("prenom", "prenoms"):
+        return "prenom" in tc or "firstnames" in tc or "firetnames" in tc
+    if kc in ("nationalite", "nationality"):
+        return "nationalit" in tc or "nalite" in tc or "nagional" in tc
+    if kc in ("pere",):
+        return "pere" in tc and "prenom" not in tc
+    return kc in tc
+
+
 def _find_label(items: list[dict], *keywords: str) -> dict | None:
     """Trouve le bloc libellé (évite les valeurs seules). Match compact anti-OCR."""
     for item in items:
         tc = _compact(item["text"])
         for kw in keywords:
             kc = _compact(kw)
-            if not kc:
+            if not _label_hit(tc, kc):
                 continue
-            if kc in tc:
-                # Refuser si le bloc est uniquement la valeur EN
-                if _is_noise_value(item["text"]) and kc not in ("nom", "prenom", "npi"):
-                    continue
-                return item
+            if _is_noise_value(item["text"]) and kc not in ("nom", "prenom", "npi"):
+                continue
+            return item
     return None
 
 
@@ -1230,6 +1236,159 @@ def parse_cip(items: list[dict]) -> dict[str, Any]:
     }
 
 
+def _cut_before(text: str, pattern: str) -> str:
+    match = re.search(pattern, text, flags=re.I)
+    if not match:
+        return text.strip()
+    return text[: match.start()].strip(" ,;|:-")
+
+
+def _clean_person(text: str | None, *, kind: str = "name") -> str:
+    """Garde le nom, coupe le titre, le tampon et le champ suivant."""
+    if not text:
+        return ""
+    raw = str(text).strip()
+    label = re.search(
+        r"pr[eé]noms?(?:\s*\(s\))?|first\s+names?|firet\s+names?",
+        raw,
+        flags=re.I,
+    )
+    if kind == "first" and label:
+        raw = re.sub(r"^[\s:./()-]+", "", raw[label.end() :])
+    elif kind == "last" and label:
+        raw = raw[: label.start()]
+    raw = _cut_before(
+        raw,
+        r"\b(?:expire(?:\s*le)?|titulaire|anip|signature|filiation|"
+        r"pass(?:eport|\.)|date\s+d|nationalit)\b",
+    )
+    tokens: list[str] = []
+    for tok in re.split(r"\s+", raw):
+        bare = tok.strip(".,:;|/\\()[]'\"")
+        if not bare or bare in {":", "-", "/"}:
+            continue
+        if re.fullmatch(r"pass\.?", bare, flags=re.I):
+            break
+        letters = re.sub(r"[^A-Za-zÀ-ÿ'\-]", "", bare)
+        alpha = re.sub(r"[^A-Za-zÀ-ÿ]", "", letters)
+        if len(alpha) < 2:
+            continue
+        if not tokens and (bare[:1].islower() or len(alpha) <= 2):
+            continue
+        if tokens and bare[:1].islower():
+            break
+        if _compact(bare) in {
+            "titulaire",
+            "anip",
+            "expire",
+            "signature",
+            "prenom",
+            "prenoms",
+            "nom",
+            "pere",
+            "mere",
+            "ca",
+        }:
+            break
+        tokens.append(letters)
+    return " ".join(tokens)
+
+
+def _clean_place(text: str | None) -> str:
+    """Commune ou lieu : premier nom lisible, sans le bruit OCR de la ligne."""
+    if not text:
+        return ""
+    raw = _cut_before(
+        str(text),
+        r"\b(?:expire|titulaire|anip|nationalit|date\s+de|pr[eé]nom|num[eé]ro)\b",
+    )
+    raw = re.sub(
+        r"^(?:(?:com|arr|qt|lieu|fe)\.?\s*:?\s*)+",
+        "",
+        raw.strip(),
+        flags=re.I,
+    )
+    tokens: list[str] = []
+    for tok in re.split(r"\s+", raw):
+        bare = tok.strip(".,:;|/\\()[]")
+        if not bare:
+            continue
+        if re.fullmatch(r"(?:com|arr|qt|lieu|fe)\.?", bare, flags=re.I):
+            continue
+        core = re.sub(r"[^A-Za-zÀ-ÿ\-]", "", bare)
+        alpha = re.sub(r"[^A-Za-zÀ-ÿ]", "", core)
+        if len(alpha) < 3:
+            if tokens:
+                break
+            continue
+        if sum(ch.isalpha() for ch in bare) / len(bare) < 0.75:
+            if tokens:
+                break
+            continue
+        if tokens and bare[:1].islower():
+            break
+        tokens.append(core.upper())
+    return " ".join(tokens)
+
+
+def _clean_nationality(text: str | None, items: list[dict]) -> str:
+    chunks = [str(text or "")]
+    for item in items:
+        tc = _compact(item["text"])
+        if "republique" in tc:
+            continue
+        if (
+            "nationalit" in tc
+            or "nalite" in tc
+            or "nagional" in tc
+            or re.search(r"beninoi", _norm(item["text"]), flags=re.I)
+        ):
+            chunks.append(item["text"])
+    blob = _norm(" ".join(chunks))
+    if re.search(r"beninoi|\bbenin\b", blob, flags=re.I):
+        return "BENIN"
+    return ""
+
+
+def _recover_address(data: dict[str, Any], items: list[dict]) -> None:
+    for item in items:
+        text = item["text"]
+        tc = _compact(text)
+        if "naissance" in tc:
+            continue
+        arr = re.search(r"Arr\.?\s*:\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\-]+)", text)
+        if arr:
+            cleaned = _clean_place(arr.group(1))
+            if cleaned:
+                data["address_arrondissement"] = cleaned
+        quartier = re.search(r"Qt\.?\s*:\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\-]+)", text)
+        if quartier:
+            data["address_quartier"] = quartier.group(1).upper()
+        lieu = re.search(r"(?:^|[\s|])Lieu\s*:\s*(.+)$", text, flags=re.I)
+        if lieu:
+            kept = _cut_before(lieu.group(1), r"titulaire|\banip\b|signature|filiation")
+            kept = kept.strip(" |:-")
+            if kept:
+                data["address_lieu"] = kept
+
+
+def _refine_identity(data: dict[str, Any], items: list[dict]) -> dict[str, Any]:
+    data["last_name"] = _clean_person(data.get("last_name"), kind="last") or None
+    data["first_name"] = _clean_person(data.get("first_name"), kind="first") or None
+    data["father_name"] = _clean_person(data.get("father_name")) or None
+    data["mother_name"] = _clean_person(data.get("mother_name")) or None
+    data["birth_place"] = _clean_place(data.get("birth_place")) or None
+    if data.get("address_commune"):
+        data["address_commune"] = _clean_place(data["address_commune"]) or None
+    if data.get("address_arrondissement"):
+        data["address_arrondissement"] = _clean_place(data["address_arrondissement"]) or None
+    nationality = _clean_nationality(data.get("nationality"), items)
+    if nationality:
+        data["nationality"] = nationality
+    _recover_address(data, items)
+    return data
+
+
 def parse_items(items: list[dict]) -> dict[str, Any]:
     kind = detect_card(items)
     if kind == "cedeao":
@@ -1244,6 +1403,8 @@ def parse_items(items: list[dict]) -> dict[str, Any]:
         score = lambda d: sum(1 for k, v in d.items() if v and k != "card_type")
         data = a if score(a) >= score(b) else b
 
+    data = _refine_identity(data, items)
+
     # Nettoyage final anti-EN
     for key in ("last_name", "first_name", "birth_place", "nationality"):
         if data.get(key) and _is_noise_value(str(data[key])):
@@ -1252,36 +1413,22 @@ def parse_items(items: list[dict]) -> dict[str, Any]:
 
 
 def ocr_id_card(image_bytes: bytes) -> dict[str, Any]:
-    timeout = int(os.environ.get("DOTO_OCR_TIMEOUT", "25"))
-
-    def _run() -> dict[str, Any]:
-        items, engine = read_items(image_bytes)
-        data = parse_items(items)
-        data["ocr_engine"] = engine
-        data["raw_text"] = "\n".join(i["text"] for i in items)[:3000]
-        logger.info(
-            "OCR ok engine=%s npi=%s type=%s blocs=%s",
-            engine,
-            data.get("npi") or "-",
-            data.get("card_type"),
-            len(items),
+    items, engine = read_items(image_bytes)
+    data = parse_items(items)
+    data["ocr_engine"] = engine
+    data["raw_text"] = "\n".join(i["text"] for i in items)[:3000]
+    logger.info(
+        "OCR ok engine=%s npi=%s type=%s blocs=%s",
+        engine,
+        data.get("npi") or "-",
+        data.get("card_type"),
+        len(items),
+    )
+    if not data.get("npi"):
+        raise ValueError(
+            "NPI introuvable. Cadrez toute la carte CIP ou CEDEAO, NPI bien lisible."
         )
-        if not data.get("npi"):
-            raise ValueError(
-                "NPI introuvable. Cadrez toute la carte CIP ou CEDEAO, NPI bien lisible."
-            )
-        return data
-
-    if timeout <= 0:
-        return _run()
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(_run)
-        try:
-            return future.result(timeout=timeout)
-        except FuturesTimeout as e:
-            raise TimeoutError(
-                f"OCR timeout après {timeout}s. Réessayez avec une photo nette et cadrée."
-            ) from e
+    return data
 
 
 # Compat tests unitaires texte-only (sans géométrie)

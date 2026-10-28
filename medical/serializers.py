@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from django.utils import timezone
+
 from .models import (
     BonExamen,
     BonExamenLigne,
@@ -26,6 +28,7 @@ class ConsultationSerializer(serializers.ModelSerializer):
         source="appointment.debut", read_only=True, allow_null=True
     )
     titre = serializers.SerializerMethodField()
+    incomplete = serializers.SerializerMethodField()
 
     class Meta:
         model = Consultation
@@ -35,7 +38,8 @@ class ConsultationSerializer(serializers.ModelSerializer):
             "appointment", "appointment_id", "appointment_debut",
             "date", "type", "type_label", "specialite", "motif",
             "diagnostic", "notes", "extra", "annule",
-            "titre", "created_at", "updated_at",
+            "shared_with_patient", "synthese_patient",
+            "titre", "incomplete", "created_at", "updated_at",
         ]
         read_only_fields = ["medecin", "annule", "created_at", "updated_at"]
 
@@ -56,6 +60,22 @@ class ConsultationSerializer(serializers.ModelSerializer):
         if date_s:
             parts.append(date_s)
         return " - ".join(parts)
+
+    def get_incomplete(self, obj):
+        return not (
+            (obj.diagnostic or "").strip()
+            or (obj.notes or "").strip()
+            or (obj.synthese_patient or "").strip()
+        )
+
+    def validate_date(self, value):
+        if self.instance is not None:
+            return value
+        if value and value < timezone.now():
+            raise serializers.ValidationError(
+                "La date de consultation ne peut pas être dans le passé."
+            )
+        return value
 
 
 class MedicamentSerializer(serializers.ModelSerializer):
@@ -96,6 +116,13 @@ class OrdonnanceSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
         read_only_fields = ["medecin", "structure", "alertes_interactions", "dispensee_le", "updated_at"]
+
+    def validate_date(self, value):
+        if value and value < timezone.localdate():
+            raise serializers.ValidationError(
+                "La date de l'ordonnance ne peut pas être dans le passé."
+            )
+        return value
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -180,6 +207,13 @@ class ExamenSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(url)
         return url
+
+    def validate_date(self, value):
+        if value and value < timezone.localdate():
+            raise serializers.ValidationError(
+                "La date de l'examen ne peut pas être dans le passé."
+            )
+        return value
 
 
 class ConstanteVitaleSerializer(serializers.ModelSerializer):

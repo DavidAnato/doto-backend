@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from io import BytesIO
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 MAX_PHOTO_BYTES = 5 * 1024 * 1024  # 5 Mo
@@ -44,6 +45,26 @@ def _cache_bust(url: str, file_field) -> str:
     return f"{url}{sep}v={stamp}"
 
 
+def _public_media_url(path: str, request=None) -> str:
+    """URL publique. Un chemin relatif serait collé à /api/… par build_absolute_uri."""
+    if not path.startswith("/"):
+        path = "/" + path.lstrip("/")
+    built = None
+    if request is not None:
+        try:
+            built = request.build_absolute_uri(path)
+        except Exception:
+            built = None
+    host = (urlsplit(built).hostname or "").lower() if built else ""
+    public_host = (urlsplit(public_api_base()).hostname or "").lower()
+    internal = host in {"", "localhost", "127.0.0.1", "0.0.0.0", "await-origin.fotoce.app"}
+    if built and not internal:
+        return built
+    if public_host:
+        return f"{public_api_base()}{path}"
+    return built or f"{public_api_base()}{path}"
+
+
 def absolute_media_url(file_field, request=None) -> str | None:
     """URL absolue pour apps mobiles (BlueStacks → 127.0.0.1:8000)."""
     if not file_field:
@@ -56,11 +77,7 @@ def absolute_media_url(file_field, request=None) -> str | None:
         return None
     if relative.startswith("http://") or relative.startswith("https://"):
         return _cache_bust(relative, file_field)
-    if request is not None:
-        return _cache_bust(request.build_absolute_uri(relative), file_field)
-    if not relative.startswith("/"):
-        relative = f"/{relative}"
-    return _cache_bust(f"{public_api_base()}{relative}", file_field)
+    return _cache_bust(_public_media_url(relative, request=request), file_field)
 
 
 def user_photo_url(user, request=None) -> str | None:
@@ -91,10 +108,11 @@ def patient_photo_url(patient, request=None) -> str | None:
     return None
 
 
-def validate_identity_photo(uploaded) -> None:
+def prepare_identity_photo(uploaded) -> tuple[bytes, str]:
     """
     Photo d'identité : JPEG/PNG/WebP, max 5 Mo, min 200×200.
-    Pas de détection de visage IA - contraintes techniques seulement.
+    Retourne les octets et l'extension réelle (pas celle du nom de fichier).
+    Image.verify() rejette des JPEG de téléphone pourtant lisibles : on décode avec load().
     """
     if uploaded is None:
         raise ValidationError("Fichier photo requis.")
@@ -114,17 +132,33 @@ def validate_identity_photo(uploaded) -> None:
     try:
         uploaded.seek(0)
         raw = uploaded.read()
-        uploaded.seek(0)
-        img = Image.open(BytesIO(raw))
-        img.verify()
-        uploaded.seek(0)
-        img = Image.open(BytesIO(raw))
-        width, height = img.size
     except Exception as exc:
         raise ValidationError("Fichier image invalide ou corrompu.") from exc
+    if not raw:
+        raise ValidationError("Fichier image vide.")
+
+    try:
+        img = Image.open(BytesIO(raw))
+        img.load()
+        width, height = img.size
+        fmt = (img.format or "").upper()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ValidationError("Fichier image invalide ou corrompu.") from exc
+
+    ext = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp"}.get(fmt)
+    if ext is None:
+        raise ValidationError(
+            "Format non accepté. Utilisez une photo JPEG, PNG ou WebP (photo d'identité)."
+        )
 
     if width < MIN_WIDTH or height < MIN_HEIGHT:
         raise ValidationError(
             f"Photo trop petite ({width}×{height}). Minimum {MIN_WIDTH}×{MIN_HEIGHT} px "
             "(visage centré, type photo d'identité)."
         )
+    return raw, ext
+
+
+def validate_identity_photo(uploaded) -> None:
+    """Compat : valide sans renvoyer les octets."""
+    prepare_identity_photo(uploaded)

@@ -13,11 +13,9 @@ User = get_user_model()
 
 ALLOWED_PRO_REGISTER_ROLES = (
     Roles.MEDECIN,
-    Roles.INFIRMIER,
     Roles.PHARMACIEN,
     Roles.LABORANTIN,
     Roles.AMBULANCIER,
-    Roles.RECEPTIONNISTE,
 )
 
 

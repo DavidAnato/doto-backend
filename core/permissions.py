@@ -33,11 +33,13 @@
 
 * Ambulancier : constantes / notes d'urgence limitées uniquement.
 
-## Consentement patient
+## Consentement
 
 Toute ouverture dossier pro (scan ou recherche) crée une AccessRequest.
-Le patient confirme via Doto+ (SSE + notif). Exceptions : mode urgence
-explicite ou rôle ambulancier (emergency_open) - bypass audité.
+Patient avec application : il confirme via DOTO+ (flux inchangé).
+Patient sans application : l'hôpital mère (accueil, ou médecin référent) accepte
+pour la durée demandée. Les professionnels de l'hôpital mère ouvrent directement.
+Urgence explicite ou ambulancier : bypass audité, hôpital mère informé ensuite.
 """
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
@@ -152,6 +154,15 @@ def role_can(role: str, section: str) -> bool:
 
 def role_can_write(role: str, section: str) -> bool:
     return role in SECTION_WRITE_ROLES.get(section, ())
+
+
+def professional_may_read_dossier(user, patient) -> bool:
+    """Vrai seulement si l'accès dossier est encore dans les temps, relu maintenant."""
+    from patients.access import can_read_dossier
+
+    if not (user and getattr(user, "is_authenticated", False)):
+        return False
+    return can_read_dossier(user, patient)
 
 
 class HasRole(BasePermission):

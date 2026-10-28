@@ -1,4 +1,7 @@
 from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
+
+from django.utils import timezone
 
 from accounts.photo_utils import patient_photo_url
 
@@ -28,6 +31,8 @@ class AppointmentSerializer(serializers.ModelSerializer):
     professionnel_nom = serializers.SerializerMethodField()
     professionnel_photo_url = serializers.SerializerMethodField()
     statut_label = serializers.CharField(source="get_statut_display", read_only=True)
+    consultation_id = serializers.SerializerMethodField()
+    consultation_incomplete = serializers.SerializerMethodField()
 
     class Meta:
         model = Appointment
@@ -49,6 +54,8 @@ class AppointmentSerializer(serializers.ModelSerializer):
             "notes",
             "statut",
             "statut_label",
+            "consultation_id",
+            "consultation_incomplete",
             "created_at",
             "updated_at",
         ]
@@ -68,6 +75,41 @@ class AppointmentSerializer(serializers.ModelSerializer):
         if not obj.professionnel:
             return None
         return user_photo_url(obj.professionnel, request=self.context.get("request"))
+
+    def _linked_consultation(self, obj):
+        cached = getattr(obj, "_consults", None)
+        if cached is not None:
+            return cached[0] if cached else None
+        return obj.consultations.filter(annule=False).first()
+
+    def get_consultation_id(self, obj):
+        c = self._linked_consultation(obj)
+        return c.id if c else None
+
+    def get_consultation_incomplete(self, obj):
+        c = self._linked_consultation(obj)
+        if not c:
+            return False
+        return not (
+            (c.diagnostic or "").strip()
+            or (c.notes or "").strip()
+            or (c.synthese_patient or "").strip()
+        )
+
+    def validate(self, attrs):
+        debut = attrs.get("debut")
+        if debut is None and self.instance is not None:
+            debut = self.instance.debut
+        if self.instance is None:
+            if debut and debut < timezone.now():
+                raise serializers.ValidationError(
+                    {"debut": "La date du rendez-vous ne peut pas être dans le passé."}
+                )
+        elif "debut" in attrs and attrs["debut"] and attrs["debut"] < timezone.now():
+            raise serializers.ValidationError(
+                {"debut": "La date du rendez-vous ne peut pas être dans le passé."}
+            )
+        return attrs
 
 
 class AccessBlockSerializer(serializers.ModelSerializer):
@@ -191,8 +233,17 @@ class PatientDetailSerializer(serializers.ModelSerializer):
             "photo", "photo_url", "photo_required",
             "telephone", "email", "has_pin", "require_unlock", "urgence_when_locked",
             "contact_urgence_nom", "contact_urgence_lien", "tel_urgence",
+            "medecin_traitant", "medecin_traitant_nom",
             "dossier", "assurance", "urgence", "created_at",
         ]
+
+    medecin_traitant_nom = serializers.SerializerMethodField()
+
+    def get_medecin_traitant_nom(self, obj):
+        mt = getattr(obj, "medecin_traitant", None)
+        if not mt:
+            return None
+        return mt.get_full_name() or mt.username
 
     def get_urgence(self, obj):
         return UrgenceSerializer(obj, context=self.context).data
@@ -207,6 +258,9 @@ class PatientDetailSerializer(serializers.ModelSerializer):
         if user is not None and getattr(user, "photo", None):
             return False
         return True
+
+
+NPI_DEJA_PRIS = "Ce NPI est déjà enregistré pour un autre patient."
 
 
 class PatientWriteSerializer(serializers.ModelSerializer):
@@ -225,6 +279,42 @@ class PatientWriteSerializer(serializers.ModelSerializer):
             "contact_urgence_nom", "contact_urgence_lien", "tel_urgence",
             "allergies", "maladies_chroniques", "antecedents",
         ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        npi = self.fields.get("npi")
+        if npi is None:
+            return
+        replaced = False
+        validators = []
+        for validator in npi.validators:
+            if isinstance(validator, UniqueValidator):
+                validators.append(
+                    UniqueValidator(
+                        queryset=validator.queryset,
+                        message=NPI_DEJA_PRIS,
+                        lookup=getattr(validator, "lookup", "exact"),
+                    )
+                )
+                replaced = True
+            else:
+                validators.append(validator)
+        if not replaced:
+            validators.append(
+                UniqueValidator(queryset=Patient.objects.all(), message=NPI_DEJA_PRIS)
+            )
+        npi.validators = validators
+
+    def validate_npi(self, value):
+        cleaned = (value or "").strip()
+        if not cleaned:
+            return cleaned
+        qs = Patient.objects.filter(npi__iexact=cleaned)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(NPI_DEJA_PRIS)
+        return cleaned
 
     def _sync_dossier(self, patient, allergies, maladies, antecedents=None):
         dossier, _ = DossierMedical.objects.get_or_create(patient=patient)

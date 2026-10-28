@@ -88,5 +88,6 @@
   {"id":87,"name":"HZ Ouaké","full_name":"Hôpital de Zone d'Ouaké","type":"hôpital_de_zone","ownership":"public","department":"Donga","commune":"Ouaké","address":"Ouaké, Bénin","phone":null,"latitude":null,"longitude":null},
   {"id":88,"name":"Hôpital Saint Martin de Papané","full_name":"Hôpital Saint Martin de Papané","type":"hôpital","ownership":"confessionnel","department":"Borgou","commune":"Tchaourou","address":"Papané, Tchaourou, Bénin","phone":null,"latitude":null,"longitude":null},
   {"id":89,"name":"Hôpital Boko","full_name":"Hôpital de Boko","type":"hôpital","ownership":"public","department":"Borgou","commune":"Parakou","address":"Boko, Parakou, Bénin","phone":null,"latitude":null,"longitude":null},
-  {"id":90,"name":"Labo Bénin-Santé","full_name":"Laboratoire Bénin-Santé","type":"laboratoire","ownership":"privé","department":"Littoral","commune":"Cotonou","address":"Cotonou, Bénin","phone":null,"latitude":null,"longitude":null}
+  {"id":90,"name":"Labo Bénin-Santé","full_name":"Laboratoire Bénin-Santé","type":"laboratoire","ownership":"privé","department":"Littoral","commune":"Cotonou","address":"Cotonou, Bénin","phone":null,"latitude":null,"longitude":null},
+  {"id":91,"name":"Clinique Les Mélodies","full_name":"Clinique Les Mélodies","type":"clinique","ownership":"privé","department":"Atlantique","commune":"Abomey-Calavi","address":"Godomey-Plateau, rue Adjanohoun, Abomey-Calavi, Bénin","phone":"+229 98 30 02 30","latitude":null,"longitude":null}
 ]

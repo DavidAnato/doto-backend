@@ -81,11 +81,7 @@ class MyKycSubmitView(APIView):
             )
         missing = []
         if not kyc.piece_recto:
-            missing.append("pièce d'identité recto")
-        if not kyc.piece_verso:
-            missing.append("pièce d'identité verso")
-        if not kyc.selfie:
-            missing.append("selfie / preuve")
+            missing.append("scan de la carte d'identité (recto)")
         if not (kyc.nom or request.user.last_name):
             missing.append("nom")
         if not (kyc.prenom or request.user.first_name):
@@ -95,11 +91,21 @@ class MyKycSubmitView(APIView):
                 {"detail": "Complétez : " + ", ".join(missing) + "."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        kyc.statut = KycDossier.Statut.EN_ATTENTE
+        # KYC simplifié : scan carte uniquement → validé automatiquement
+        kyc.statut = KycDossier.Statut.VALIDE
         kyc.submitted_at = timezone.now()
+        kyc.reviewed_at = timezone.now()
         kyc.motif_refus = ""
-        kyc.save(update_fields=["statut", "submitted_at", "motif_refus", "updated_at"])
-        log_action(request, "kyc_submit", target=request.user.username)
+        kyc.save(
+            update_fields=[
+                "statut",
+                "submitted_at",
+                "reviewed_at",
+                "motif_refus",
+                "updated_at",
+            ]
+        )
+        log_action(request, "kyc_submit_auto_valid", target=request.user.username)
         return Response(KycDossierSerializer(kyc, context={"request": request}).data)
 
 
